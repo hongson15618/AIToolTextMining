@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv/
+venv/
+saved_snapshots/*.json
+!saved_snapshots/.gitkeep
