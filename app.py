@@ -43,6 +43,12 @@ from snapshot_manager import (
     load_snapshot,
     delete_snapshot
 )
+from ai_teaching_memory import (
+    load_teaching_memory,
+    add_teaching_rule,
+    delete_teaching_rule,
+    get_teaching_context_for_ai
+)
 
 # Cấu hình trang Streamlit
 st.set_page_config(
@@ -55,6 +61,27 @@ st.set_page_config(
 # Custom CSS cho giao diện chuẩn UEH
 st.markdown("""
 <style>
+    .watermark-banner {
+        background: linear-gradient(90deg, #0F172A 0%, #1E293B 50%, #0F172A 100%);
+        border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 8px 18px;
+        margin-bottom: 15px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+    }
+    .watermark-banner .brand {
+        font-size: 0.85rem;
+        color: #94A3B8;
+        font-weight: 500;
+    }
+    .watermark-banner .author {
+        font-size: 0.88rem;
+        color: #E2E8F0;
+        font-weight: 600;
+    }
     .main-header {
         background: linear-gradient(135deg, #0F172A 0%, #1E3A8A 50%, #0D9488 100%);
         padding: 22px 28px;
@@ -288,6 +315,18 @@ st.markdown("""
 STOPWORDS_FILE = os.path.join(os.path.dirname(__file__), "vietnamese_stopwords.txt")
 default_stopwords = load_stopwords(STOPWORDS_FILE)
 
+# Watermark Banner
+st.markdown("""
+<div class="watermark-banner">
+    <div class="brand">
+        ⚡ <b>UEH MARKETING ANALYTICS PLATFORM</b> — Hệ thống Xử lý & Phân tích Đánh giá Khách hàng
+    </div>
+    <div class="author">
+        ✨ <i>Tool được thiết kế bởi Sơn — liên hệ <span style="color: #38BDF8; font-weight: 700;">0776.941.932</span></i>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
 # Header
 st.markdown("""
 <div class="main-header">
@@ -305,23 +344,20 @@ st.markdown("""
 
 # SIDEBAR
 with st.sidebar:
-    st.header("⚙️ Cấu hình & Bản Sao")
+    st.header("⚙️ Cấu hình & Dạy AI")
     
     # -------------------------------------------------------------------------
-    # PHẦN QUẢN LÝ BẢN SAO (SNAPSHOT CHECKPOINTS & RESTORE)
+    # PHẦN QUẢN LÝ BẢN SAO (COLLAPSIBLE CHECKPOINTS & RESTORE)
     # -------------------------------------------------------------------------
-    st.subheader("📦 Bản Sao Dữ Liệu (Snapshots)")
-    st.caption("Lưu lại tiến độ đang chạy hoặc kết quả hoàn tất. Tắt tool mở lại vẫn còn nguyên vẹn.")
-
-    # Form lưu bản sao mới
-    with st.expander("💾 Lưu Bản Sao Hiện Tại", expanded=False):
+    with st.expander("📦 Bản Sao Dữ Liệu", expanded=False):
+        st.caption("Lưu lại tiến độ đang chạy hoặc kết quả hoàn tất. Tắt tool mở lại vẫn còn nguyên vẹn.")
         snapshot_custom_name = st.text_input(
             "Tên bản sao (Tùy chọn):",
             placeholder="Ví dụ: Tiến độ 1450 dòng",
             key="input_snp_name_sb"
         )
         can_save_snp = (st.session_state.get("df_cached") is not None and st.session_state.get("clean_idx", 0) > 0) or (st.session_state.get("results") is not None)
-        if st.button("💾 Lưu Ngay", type="primary" if can_save_snp else "secondary", disabled=not can_save_snp, use_container_width=True, key="btn_save_snp_sb"):
+        if st.button("💾 Lưu Bản Sao Hiện Tại", type="primary" if can_save_snp else "secondary", disabled=not can_save_snp, use_container_width=True, key="btn_save_snp_sb"):
             cur_df_in = st.session_state.get("df_cached")
             cur_df_live = st.session_state.get("clean_live_df") or st.session_state.get("df_live_final")
             cur_res = st.session_state.get("clean_results") or st.session_state.get("results") or []
@@ -343,60 +379,111 @@ with st.sidebar:
             st.toast(f"✅ Đã lưu bản sao: {snp_id}!", icon="💾")
             st.rerun()
 
-    # Danh sách bản sao đã lưu
-    saved_list = list_snapshots()
-    if not saved_list:
-        st.info("Chưa có bản sao nào được lưu.")
-    else:
-        st.markdown(f"**Danh sách ({len(saved_list)} bản sao):**")
-        for snp in saved_list:
+        st.markdown("---")
+        # Danh sách bản sao đã lưu
+        saved_list = list_snapshots()
+        if not saved_list:
+            st.info("Chưa có bản sao nào được lưu.")
+        else:
+            st.markdown(f"**Danh sách ({len(saved_list)} bản sao):**")
+            for snp in saved_list:
+                st.markdown(f"""
+                <div style="background:#1E293B; border:1px solid #334155; border-radius:8px; padding:8px 10px; margin-bottom:6px; color:#F8FAFC; font-size:0.85rem;">
+                    <div style="font-weight:700; color:#38BDF8;">📦 {snp['name']}</div>
+                    <div style="color:#CBD5E1; margin-top:2px; font-size:0.8rem;">
+                        📅 {snp['created_at']}<br>
+                        ⚡ <span style="color:#F59E0B; font-weight:600;">{snp['status']}</span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                c_sb_res, c_sb_del = st.columns([1, 1])
+                with c_sb_res:
+                    if st.button("📂 Nạp", key=f"sb_res_{snp['snapshot_id']}", use_container_width=True, type="primary"):
+                        data = load_snapshot(snp['snapshot_id'])
+                        if data:
+                            st.session_state["df_cached"] = data["df_input"]
+                            st.session_state["current_file_id"] = f"snapshot_{snp['snapshot_id']}"
+                            st.session_state["selected_col"] = data.get("target_col", "")
+                            st.session_state["clean_idx"] = data.get("processed_rows", 0)
+                            st.session_state["clean_results"] = data.get("results", [])
+                            st.session_state["clean_live_df"] = data.get("df_live")
+                            st.session_state["clean_elapsed"] = data.get("elapsed_time", 0.0)
+                            
+                            total_r = data.get("total_rows", 0)
+                            proc_r = data.get("processed_rows", 0)
+                            
+                            if proc_r >= total_r and total_r > 0:
+                                st.session_state["pipeline_state"] = "COMPLETED"
+                                st.session_state["results"] = data.get("results", [])
+                                st.session_state["df_live_final"] = data.get("df_live")
+                                st.session_state["target_df"] = data["df_input"]
+                                st.session_state["target_col"] = data.get("target_col", "")
+                            else:
+                                st.session_state["pipeline_state"] = "PAUSED"
+                                st.session_state["results"] = data.get("results", [])
+                                st.session_state["df_live_final"] = data.get("df_live")
+                                st.session_state["target_df"] = data["df_input"]
+                                st.session_state["target_col"] = data.get("target_col", "")
+                                
+                            st.toast(f"Đã nạp bản sao: {snp['name']}", icon="📂")
+                            st.rerun()
+                with c_sb_del:
+                    if st.button("🗑️ Xóa", key=f"sb_del_{snp['snapshot_id']}", use_container_width=True):
+                        if delete_snapshot(snp['snapshot_id']):
+                            st.toast("Đã xóa bản sao!", icon="🗑️")
+                            st.rerun()
+                st.write("")
+
+    # -------------------------------------------------------------------------
+    # PHẦN LỊCH SỬ DẠY AI - TOOL (AI TEACHING MEMORY LOG)
+    # -------------------------------------------------------------------------
+    with st.expander("🧠 Lịch Sử Dạy AI — Tool", expanded=False):
+        st.markdown("""
+        <div style="font-size:0.83rem; color:#CBD5E1; margin-bottom:8px;">
+            Ghi nhớ mọi bài học & quy tắc bạn đã dạy cho AI. Tự động áp dụng vào quy trình xử lý dữ liệu.
+        </div>
+        """, unsafe_allow_html=True)
+        
+        teach_text_input = st.text_area(
+            "Dạy kiến thức mới cho AI:",
+            placeholder="Gõ: Dạy AI: [Nội dung quy tắc / kinh nghiệm mới]...",
+            help="Ví dụ: Dạy AI: Các từ viết tắt như 'bt' chuyển thành 'bình thường'...",
+            key="txt_teach_ai_box",
+            height=85
+        )
+        if st.button("🧠 Ghi Nhớ & Dạy AI Ngay", type="primary", use_container_width=True, key="btn_teach_ai_act"):
+            if teach_text_input.strip():
+                new_rule = add_teaching_rule(teach_text_input)
+                st.toast(f"✅ AI đã học và lưu bài học mới: [{new_rule['tag']}]!", icon="🧠")
+                st.rerun()
+            else:
+                st.warning("Vui lòng nhập nội dung muốn dạy AI trước.")
+        
+        st.markdown("---")
+        rules_mem = load_teaching_memory()
+        st.markdown(f"**📚 Bộ nhớ AI ({len(rules_mem)} quy tắc đã lưu):**")
+        
+        for rule in rules_mem:
+            tag_name = rule.get("tag", "Quy tắc")
+            tag_color = "#38BDF8" if tag_name == "Lọc Review Vô Nghĩa" else ("#34D399" if tag_name == "Nhận Diện Đa Ngôn Ngữ" else ("#F59E0B" if tag_name == "Sửa Lỗi Chính Tả & Teencode" else "#EC4899"))
             st.markdown(f"""
-            <div style="background:#1E293B; border:1px solid #334155; border-radius:8px; padding:8px 10px; margin-bottom:6px; color:#F8FAFC; font-size:0.85rem;">
-                <div style="font-weight:700; color:#38BDF8;">📦 {snp['name']}</div>
-                <div style="color:#CBD5E1; margin-top:2px; font-size:0.8rem;">
-                    📅 {snp['created_at']}<br>
-                    ⚡ <span style="color:#F59E0B; font-weight:600;">{snp['status']}</span>
+            <div style="background:#1E293B; border:1px solid #334155; border-radius:8px; padding:10px 12px; margin-bottom:8px; color:#F8FAFC; font-size:0.83rem;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                    <span style="background:rgba(255,255,255,0.1); color:{tag_color}; padding:2px 8px; border-radius:12px; font-weight:700; font-size:0.75rem; border:1px solid {tag_color};">🏷️ {tag_name}</span>
+                    <span style="color:#94A3B8; font-size:0.75rem;">📅 {rule.get('created_at', '')}</span>
+                </div>
+                <div style="color:#E2E8F0; line-height:1.45; margin-top:4px;">
+                    {rule.get('content', '')}
                 </div>
             </div>
             """, unsafe_allow_html=True)
             
-            c_sb_res, c_sb_del = st.columns([1, 1])
-            with c_sb_res:
-                if st.button("📂 Nạp", key=f"sb_res_{snp['snapshot_id']}", use_container_width=True, type="primary"):
-                    data = load_snapshot(snp['snapshot_id'])
-                    if data:
-                        st.session_state["df_cached"] = data["df_input"]
-                        st.session_state["current_file_id"] = f"snapshot_{snp['snapshot_id']}"
-                        st.session_state["selected_col"] = data.get("target_col", "")
-                        st.session_state["clean_idx"] = data.get("processed_rows", 0)
-                        st.session_state["clean_results"] = data.get("results", [])
-                        st.session_state["clean_live_df"] = data.get("df_live")
-                        st.session_state["clean_elapsed"] = data.get("elapsed_time", 0.0)
-                        
-                        total_r = data.get("total_rows", 0)
-                        proc_r = data.get("processed_rows", 0)
-                        
-                        if proc_r >= total_r and total_r > 0:
-                            st.session_state["pipeline_state"] = "COMPLETED"
-                            st.session_state["results"] = data.get("results", [])
-                            st.session_state["df_live_final"] = data.get("df_live")
-                            st.session_state["target_df"] = data["df_input"]
-                            st.session_state["target_col"] = data.get("target_col", "")
-                        else:
-                            st.session_state["pipeline_state"] = "PAUSED"
-                            st.session_state["results"] = data.get("results", [])
-                            st.session_state["df_live_final"] = data.get("df_live")
-                            st.session_state["target_df"] = data["df_input"]
-                            st.session_state["target_col"] = data.get("target_col", "")
-                            
-                        st.toast(f"Đã nạp bản sao: {snp['name']}", icon="📂")
-                        st.rerun()
-            with c_sb_del:
-                if st.button("🗑️ Xóa", key=f"sb_del_{snp['snapshot_id']}", use_container_width=True):
-                    if delete_snapshot(snp['snapshot_id']):
-                        st.toast("Đã xóa bản sao!", icon="🗑️")
-                        st.rerun()
-            st.write("")
+            if not rule.get("is_default", False):
+                if st.button("🗑️ Xóa bài học này", key=f"del_mem_rule_{rule['id']}", use_container_width=True):
+                    delete_teaching_rule(rule['id'])
+                    st.toast("Đã xóa bài học khỏi bộ nhớ AI!", icon="🗑️")
+                    st.rerun()
 
     st.divider()
 
