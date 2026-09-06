@@ -61,15 +61,33 @@ HTML_REGEX = re.compile(r"<.*?>")
 PHONE_REGEX = re.compile(r"\b(0[3|5|7|8|9]+[0-9]{8})\b")
 EMAIL_REGEX = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
 
-# Regex lọc bỏ ngày tháng & giờ giấc
+# Regex lọc bỏ ngày tháng & giờ giấc chi tiết (16h, 21h, 12h mấy, lúc 19h, 8h30, ngày 31/3...)
 DATETIME_PATTERNS = [
+    r"\b(?:lúc|vào\s+lúc|hồi|đợt)\s+\d{1,2}(?:h|:\d{2})(?:\s*(?:mấy|hơn|kém|\d{1,2}|phút))?(?:\s*(?:sáng|trưa|chiều|tối|đêm))?\b",
+    r"\b\d{1,2}h(?:\d{1,2})?(?:\s*(?:sáng|trưa|chiều|tối|đêm))?\b",
+    r"\b\d{1,2}:\d{2}(?::\d{2})?(?:\s*(?:sáng|trưa|chiều|tối|đêm))?\b",
+    r"\b\d{1,2}\s*(?:giờ|tiếng)\s*(?:\d{1,2}\s*phút)?(?:\s*(?:sáng|trưa|chiều|tối|đêm))?\b",
     r"\bngày\s+\d{1,2}(?:[/-]\d{1,2}(?:[/-]\d{2,4})?)?\b",
-    r"\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b",
-    r"\b\d{1,2}h(?:\d{1,2})?\b",
-    r"\b\d{1,2}:\d{2}(?::\d{2})?\b",
-    r"\b\d{1,2}\s*(?:giờ|phút|giây)\b"
+    r"\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b"
 ]
 DATETIME_REGEX = re.compile(r"|".join(DATETIME_PATTERNS), re.IGNORECASE)
+
+# Regex lọc bỏ khoảng cách địa lý (xa 900m, gần 1km, cách 500m, 100 mét, 2 cây số...)
+DISTANCE_PATTERNS = [
+    r"\b(?:xa|gần|cách|tầm|khoảng)\s+\d+(?:[\.,]\d+)?\s*(?:km|m|mét|met|cây\s*số|cây|kilomet|kilômét)\b",
+    r"\b\d+(?:[\.,]\d+)?\s*(?:km|mét|met|cây\s*số|kilomet|kilômét)\b",
+    r"\b\d{2,}\s*m\b"
+]
+DISTANCE_REGEX = re.compile(r"|".join(DISTANCE_PATTERNS), re.IGNORECASE)
+
+# Regex lọc bỏ tên riêng nhân viên / cá nhân (bạn Kim Anh, mr Suri, mr Ruby, bạn Mimi, nickname Mimi...)
+NAME_PATTERNS = [
+    r"\b(?:mr\.?|ms\.?|mrs\.?)\s+[A-Za-zÀ-ỹ]+(?:\s+[A-Za-zÀ-ỹ]+)?\b",
+    r"\bnickname\s+(?:là\s+)?['\"]?[A-Za-zÀ-ỹ]+['\"]?\s*(?:thì\s+phải)?\b",
+    r"\b(?:bạn|em|anh|chị)\s+(?:nhân\s+viên\s+)?(?:tên\s+(?:là\s+)?)?(?:Kim\s+Anh|Thu\s+Hà|Hoàng\s+Nam|Minh\s+Tuấn|Thị\s+Lan|Anh\s+Đức|Suri|Ruby|Mimi|David|John|Miller|Doe)\b",
+    r"\b(?:bạn|em|anh|chị)\s+([A-ZÀ-Ỹ][a-zà-ỹ]+(?:\s+[A-ZÀ-Ỹ][a-zà-ỹ]+)?)\b"
+]
+NAME_REGEX = re.compile(r"|".join(NAME_PATTERNS), re.IGNORECASE)
 
 FRENCH_KEYWORDS = {'je', 'tu', 'il', 'elle', 'nous', 'vous', 'ils', 'elles', 'le', 'la', 'les', 'des', 'du', 'un', 'une', 'pas', 'est', 'sont', 'ont', 'pour', 'avec', 'dans', 'sur', 'qui', 'que', 'très', 'service', 'étoiles', 'ambiance', 'sales', 'aucun', 'mains', 'toilette', 'toilettes', 'lavabo', 'eau', 'fait', 'tous', 'deux', 'types', 'air', 'toujours', 'enfin', 'sent', 'tronche', 'sol', 'table', 'coca', 'laver', 'narrive', 'étoile'}
 ITALIAN_KEYWORDS = {'il', 'lo', 'la', 'i', 'gli', 'le', 'un', 'uno', 'una', 'di', 'da', 'in', 'con', 'su', 'per', 'tutto', 'sporco', 'ovunque', 'sporcizia', 'non', 'puliscono', 'ne', 'all', 'interno', 'esterno', 'neanche', 'tavoli', 'vergogna', 'sono', 'molto', 'bene', 'grazie', 'questo'}
@@ -294,8 +312,29 @@ def detect_foreign_language_code(text: str) -> Tuple[bool, str]:
 
 
 def remove_dates_and_times(text: str) -> str:
-    """Loại bỏ ngày tháng (31/3, 31-3) và giờ giấc (9h, 9h30, 20:00, 9 giờ)."""
+    """Loại bỏ ngày tháng (31/3, 31-3) và giờ giấc cụ thể (16h, lúc 21h, 12h mấy, lúc 19h, 8h30, 9 giờ...)."""
     text = DATETIME_REGEX.sub(" ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def remove_distances(text: str) -> str:
+    """Loại bỏ khoảng cách địa lý (xa 900m, gần 1km, cách 500m, 100 mét, 2 cây số...)."""
+    text = DISTANCE_REGEX.sub(" ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def remove_personal_names(text: str) -> str:
+    """Loại bỏ tên riêng cá nhân/nhân viên (bạn Kim Anh, mr Suri, mr Ruby, nickname Mimi...)."""
+    text = NAME_REGEX.sub(" ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def clean_noise_entities(text: str) -> str:
+    """Tự động làm sạch toàn diện: Tên riêng cá nhân, khoảng cách địa lý và thời gian/ngày giờ."""
+    text = remove_distances(text)
+    text = remove_dates_and_times(text)
+    text = remove_personal_names(text)
+    text = remove_noise_phrases(text)
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -339,8 +378,34 @@ def fix_typo_leetspeak(text: str) -> str:
     return " ".join(fixed_words)
 
 
+def _translate_via_google_clients5(text: str, src_lang: str = "auto") -> str:
+    """Gọi Google Translate Clients5 Chrome API (hỗ trợ dịch hoàn hảo cả đoạn song ngữ/đa ngữ hỗn hợp)."""
+    try:
+        url = "https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=" + urllib.parse.quote(src_lang) + "&tl=vi&q=" + urllib.parse.quote(text)
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if isinstance(data, list):
+                if len(data) > 0 and isinstance(data[0], list) and len(data[0]) > 0 and isinstance(data[0][0], str):
+                    res = data[0][0].strip()
+                    if res and res != text.strip():
+                        return res
+                elif len(data) > 0 and isinstance(data[0], str):
+                    res = data[0].strip()
+                    if res and res != text.strip():
+                        return res
+    except Exception:
+        pass
+    return ""
+
+
 def _translate_via_google_gtx(text: str, src_lang: str = "auto") -> str:
-    """Gọi trực tiếp Google Translate GTX API (miễn phí, siêu nhanh, không giới hạn token/key, ổn định 100%)."""
+    """Gọi trực tiếp Google Translate GTX API (miễn phí, siêu nhanh, không giới hạn token/key)."""
     try:
         url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=" + urllib.parse.quote(src_lang) + "&tl=vi&dt=t&q=" + urllib.parse.quote(text)
         req = urllib.request.Request(
@@ -378,7 +443,13 @@ def translate_to_vietnamese(text: str) -> str:
         _TRANSLATION_CACHE[text_clean] = res
         return res
 
-    # 1. Nhận diện ngôn ngữ & Gọi Google Translate GTX với mã ngôn ngữ phát hiện được
+    # 1. Thử dịch qua Clients5 API (Hỗ trợ tốt nhất cho văn bản song ngữ Anh - Trung, Anh - Nga...)
+    res_c5 = _translate_via_google_clients5(text_clean, src_lang="auto")
+    if res_c5:
+        _TRANSLATION_CACHE[text_clean] = res_c5
+        return res_c5
+
+    # 2. Thử qua Google Translate GTX
     is_foreign, lang_code = detect_foreign_language_code(text_clean)
     if is_foreign and lang_code and lang_code != "vi":
         gtx_lang = _translate_via_google_gtx(text_clean, src_lang=lang_code)
@@ -386,10 +457,10 @@ def translate_to_vietnamese(text: str) -> str:
             _TRANSLATION_CACHE[text_clean] = gtx_lang
             return gtx_lang
 
-    # Fallback thử với auto
     gtx_full = _translate_via_google_gtx(text_clean, src_lang="auto")
     if gtx_full:
         _TRANSLATION_CACHE[text_clean] = gtx_full
+        return gtx_full
         return gtx_full
 
     # 2. Nếu là văn bản nhiều câu hoặc đoạn hỗn hợp đa ngữ (Ví dụ: Câu 1 Tiếng Anh, Câu 2 Tiếng Trung)
@@ -863,19 +934,22 @@ def clean_single_review(
             }
         }
 
-    # BƯỚC 1: TIỀN XỬ LÝ TYPO TIẾNG ANH (L9CATION -> LOCATION), DỊCH TIẾNG VIỆT, CHỮ THƯỜNG & BỎ KÝ TỰ THỪA / ICON
+    # BƯỚC 1: TIỀN XỬ LÝ TYPO TIẾNG ANH (L9CATION -> LOCATION), DỊCH TIẾNG VIỆT, CHỮ THƯỜNG, BỎ TÊN RIÊNG, KHOẢNG CÁCH, THỜI GIAN & KÝ TỰ THỪA / ICON
     current_text = normalize_unicode(raw_str)
     
     # Sửa lỗi gõ số thay chữ tiếng Anh (l9cation -> location, g00d -> good) TRƯỚC KHI DỊCH
     current_text = fix_typo_leetspeak(current_text)
     current_text = normalize_repeated_characters(current_text)
-    current_text = remove_dates_and_times(current_text)
+    current_text = clean_noise_entities(current_text)
 
-    # Dịch toàn bộ sang Tiếng Việt
+    # Dịch toàn bộ sang Tiếng Việt (hỗ trợ đa ngữ & song ngữ trọn vẹn)
     translated_text = current_text
     if translate_to_vi:
         translated_text = translate_to_vietnamese(current_text)
         current_text = translated_text
+
+    # Quét sạch tên riêng cá nhân, khoảng cách địa lý và thời gian sau khi dịch
+    current_text = clean_noise_entities(current_text)
 
     # Chuyển chữ thường (Lowercase)
     if use_lowercase:
@@ -896,6 +970,7 @@ def clean_single_review(
     replaced_teencodes = []
     if fix_teencode:
         step2_teencode, replaced_teencodes = normalize_teencode_and_typos(current_text)
+        step2_teencode = clean_noise_entities(step2_teencode)
         current_text = step2_teencode
 
     # BƯỚC 3: VĂN BẢN ĐÃ CLEAN (TÁCH TỪ GHÉP & LỌC TỪ DỪNG)
