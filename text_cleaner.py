@@ -557,8 +557,8 @@ def ai_summarize_review_keypoints(text: str) -> str:
 
 def normalize_teencode_and_typos(text: str) -> Tuple[str, List[Tuple[str, str]]]:
     """
-    Chuẩn hóa Teencode, từ viết tắt và lỗi chính tả tiếng Việt.
-    Đồng thời áp dụng Mô hình AI để tóm tắt ý chính súc tích đối với các review nhiều ý / phản ánh chi tiết.
+    Chuẩn hóa Teencode, từ viết tắt, lỗi chính tả tiếng Việt và lọc từ thừa.
+    Giữ trọn vẹn từng câu chữ thật ban đầu của review khách hàng (không tự tạo tóm tắt mới).
     """
     if not text.strip():
         return "", []
@@ -576,6 +576,9 @@ def normalize_teencode_and_typos(text: str) -> Tuple[str, List[Tuple[str, str]]]
 
     replaced_items = []
     current_text = text
+
+    # Lọc bỏ cụm từ rác / vô nghĩa nếu có xen lẫn trong câu
+    current_text = remove_noise_phrases(current_text)
 
     for slang, standard in combined_dict.items():
         if " " in slang or len(slang) > 10:
@@ -596,15 +599,9 @@ def normalize_teencode_and_typos(text: str) -> Tuple[str, List[Tuple[str, str]]]
             normalized_parts.append(token)
 
     normalized_text = "".join(normalized_parts)
+    normalized_text = re.sub(r"\s+", " ", normalized_text).strip()
 
-    # Áp dụng AI Tóm Tắt Ý Chính (Review Summarization) đối với các review dài/nhiều phản ánh
-    ai_summary = ai_summarize_review_keypoints(normalized_text)
-    if ai_summary:
-        result_text = ai_summary
-    else:
-        result_text = normalized_text
-
-    return result_text, replaced_items
+    return normalized_text, replaced_items
 
 
 def normalize_unicode(text: str) -> str:
@@ -894,7 +891,7 @@ def clean_single_review(
     current_text = re.sub(r"\s+", " ", current_text).strip()
     step1_translated_clean = current_text
 
-    # BƯỚC 2: SỬA TEENCODE, LỖI CHÍNH TẢ & AI TÓM TẮT Ý CHÍNH
+    # BƯỚC 2: SỬA TEENCODE, LỖI CHÍNH TẢ & LỌC TỪ THỪA (GIỮ NGUYÊN CÂU TỪ GỐC)
     step2_teencode = current_text
     replaced_teencodes = []
     if fix_teencode:

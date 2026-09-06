@@ -10,7 +10,7 @@ Hệ thống Nền Tảng AI Marketing chuyên sâu tiền xử lý văn bản �
 
 1. **🧹 Pipeline Tiền Xử Lý 4 Bước Real-Time (Tối Ưu Hiệu Năng Cao)**:
    - **Bước 1**: Dịch đa ngôn ngữ toàn cầu thông minh (Anh, Nga, Pháp, Ý, Hàn, Trung, Nhật... sang Tiếng Việt chuẩn xác), chuyển chữ thường, loại bỏ ký tự thừa & icon.
-   - **Bước 2**: Sửa Teencode, lỗi chính tả & **Mô hình AI Đọc Hiểu Tóm Tắt Ý Chính (Multi-Aspect Balanced Summarization)** — cân bằng trọn vẹn cả khen ngợi, góp ý/phản ánh, thời gian, quy định đặt hàng, giá cả và vị trí.
+   - **Bước 2**: Sửa Teencode, chuẩn hóa từ viết tắt, lỗi chính tả & lọc chữ thừa — **giữ trọn vẹn từng câu chữ thật ban đầu của review khách hàng**.
    - **Bước 3**: Văn bản đã Clean (Tách từ ghép tiếng Việt với `underthesea` & Lọc từ dừng thông minh).
    - **Bước 4**: Bóc tách Tokens NLP súc tích phản ánh đúng trọng tâm vấn đề.
    - **Bộ điều khiển**: Tạm dừng (**Pause**) & Tiếp tục (**Resume**) tiến độ bất cứ lúc nào đối với tập dữ liệu lớn (>8,000 dòng).
@@ -61,7 +61,7 @@ Hoặc nhấp đúp vào file `run_tool.bat` trên Windows.
 
 ## 📁 Cấu Trúc Dự Án
 - `app.py`: Giao diện Web Streamlit chuẩn Dark Mode & bộ điều khiển Pipeline.
-- `text_cleaner.py`: Module NLP tiếng Việt, dịch thuật đa ngôn ngữ toàn cầu, sửa teencode & AI Tóm tắt ý chính.
+- `text_cleaner.py`: Module NLP tiếng Việt, dịch thuật đa ngôn ngữ toàn cầu, sửa teencode & lọc từ dừng.
 - `sentiment_ai.py`: Phân tích cảm xúc & trực quan hóa biểu đồ Matplotlib / Seaborn.
 - `ai_teaching_memory.py`: Bộ nhớ tri thức dạy AI & cơ chế phân tích đóng góp.
 - `topic_modeling.py`: Tần suất từ, N-grams, Word Cloud & LDA Topic Modeling.

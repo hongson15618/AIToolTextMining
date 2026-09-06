@@ -41,7 +41,7 @@ valid_results = [r for r in results if not r.get("is_meaningless", False)]
 # Sheet 1: Full Cleaned Data
 df_full = df_raw.copy()
 df_full["[1. DỊCH TIẾNG VIỆT, LOWERCASE & BỎ KÝ TỰ THỪA]"] = [r["step1_translated_clean"] if not r.get("is_meaningless", False) else "LOẠI" for r in results]
-df_full["[2. SỬA TEENCODE & LỖI - AI TÓM TẮT Ý CHÍNH]"] = [r["step2_teencode"] if not r.get("is_meaningless", False) else "LOẠI" for r in results]
+df_full["[2. SỬA TEENCODE & LỖI]"] = [r["step2_teencode"] if not r.get("is_meaningless", False) else "LOẠI" for r in results]
 df_full["[3. VĂN BẢN ĐÃ CLEAN]"] = [r["cleaned_text"] if not r.get("is_meaningless", False) else "LOẠI" for r in results]
 df_full["[4. TOKENS NLP]"] = [", ".join(r["tokens"]) if not r.get("is_meaningless", False) else "LOẠI" for r in results]
 df_full["[CẢM XÚC AI]"] = [r["sentiment"]["label"] for r in results]

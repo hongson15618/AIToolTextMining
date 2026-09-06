@@ -828,7 +828,7 @@ if df_input is not None:
             # Khởi tạo bảng live
             df_live = df_input.copy()
             df_live["[1. Dịch Tiếng Việt, Lowercase & Bỏ Ký Tự Thừa]"] = ""
-            df_live["[2. Sửa Teencode & Lỗi - AI Tóm tắt ý chính]"] = ""
+            df_live["[2. Sửa Teencode & Lỗi]"] = ""
             df_live["[3. Văn Bản Đã Clean]"] = ""
             df_live["[4. Tokens NLP]"] = ""
             st.session_state["clean_live_df"] = df_live
@@ -893,7 +893,7 @@ if df_input is not None:
             )
             results_list.append(res)
             df_live.at[i, "[1. Dịch Tiếng Việt, Lowercase & Bỏ Ký Tự Thừa]"] = res["step1_translated_clean"]
-            df_live.at[i, "[2. Sửa Teencode & Lỗi - AI Tóm tắt ý chính]"] = res["step2_teencode"]
+            df_live.at[i, "[2. Sửa Teencode & Lỗi]"] = res["step2_teencode"]
             df_live.at[i, "[3. Văn Bản Đã Clean]"] = res["cleaned_text"]
             df_live.at[i, "[4. Tokens NLP]"] = ", ".join(res["tokens"])
 
@@ -1068,7 +1068,7 @@ if df_input is not None:
             "ID": [idx + 1 for idx in range(total_rows)],
             "TEXT": [r["raw_text"] for r in results],
             "[1. DỊCH TIẾNG VIỆT, LOWERCASE & BỎ KÝ TỰ THỪA]": [r["step1_translated_clean"] if not r.get("is_meaningless", False) else "LOẠI" for r in results],
-            "[2. SỬA TEENCODE & LỖI - AI TÓM TẮT Ý CHÍNH]": [r["step2_teencode"] if not r.get("is_meaningless", False) else "LOẠI" for r in results],
+            "[2. SỬA TEENCODE & LỖI]": [r["step2_teencode"] if not r.get("is_meaningless", False) else "LOẠI" for r in results],
             "[3. VĂN BẢN ĐÃ CLEAN]": [r["cleaned_text"] if not r.get("is_meaningless", False) else "LOẠI" for r in results],
             "[4. TOKENS NLP]": [", ".join(r["tokens"]) if not r.get("is_meaningless", False) else "LOẠI" for r in results]
         })
@@ -1118,7 +1118,7 @@ if df_input is not None:
 
             df_export_quick = df_input.iloc[:len(results)].copy() if df_input is not None else pd.DataFrame()
             df_export_quick["[1. DỊCH TIẾNG VIỆT, LOWERCASE & BỎ KÝ TỰ THỪA]"] = [r["step1_translated_clean"] if not r.get("is_meaningless", False) else "LOẠI" for r in results]
-            df_export_quick["[2. SỬA TEENCODE & LỖI - AI TÓM TẮT Ý CHÍNH]"] = [r["step2_teencode"] if not r.get("is_meaningless", False) else "LOẠI" for r in results]
+            df_export_quick["[2. SỬA TEENCODE & LỖI]"] = [r["step2_teencode"] if not r.get("is_meaningless", False) else "LOẠI" for r in results]
             df_export_quick["[3. VĂN BẢN ĐÃ CLEAN]"] = [r["cleaned_text"] if not r.get("is_meaningless", False) else "LOẠI" for r in results]
             df_export_quick["[4. TOKENS NLP]"] = [", ".join(r["tokens"]) if not r.get("is_meaningless", False) else "LOẠI" for r in results]
             df_export_quick["[CẢM XÚC AI]"] = [r["sentiment"]["label"] for r in results]
