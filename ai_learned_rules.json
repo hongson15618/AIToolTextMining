@@ -1,0 +1,38 @@
+[
+  {
+    "id": "RULE_20260905_165208",
+    "tag": "Tách Từ Ghép & NLP",
+    "content": "các từ như không tươi là từ ghép, đứng rời sẽ là từ \"Không\" và \"tươi\" vẫn có nghĩa nhưng không truyền tải được hết ý nghĩa của chữ \"Không tưới\" , nên từ này phải thành 1 cụm Không_tươi",
+    "contribution": "🧩 Nhận diện cụm từ ghép có nghĩa trong ngữ cảnh đánh giá; gắn kết các từ đơn thành cụm liền mạch (N-Grams: không_tươi), ngăn ngừa tình trạng tách rời làm biến đổi hoặc mất mát ngữ nghĩa gốc.",
+    "created_at": "05/09/2026 16:52:08",
+    "timestamp": 1788601928.9756699,
+    "is_default": false
+  },
+  {
+    "id": "RULE_001",
+    "tag": "Lọc Review Vô Nghĩa",
+    "content": "Đối với các dòng review cộc lốc, câu vô nghĩa hoặc sai chính tả nặng không hiểu được (Ví dụ: 'tắt mm app đi') -> Gán nhãn LOẠI và ghi rõ lý do loại bỏ ở Bước Lọc Review.",
+    "contribution": "🎯 Lọc sạch dữ liệu rác & lỗi thao tác ứng dụng; ngăn ngừa làm loãng tập dữ liệu phân tích, giúp tỷ lệ cảm xúc và mô hình chủ đề LDA phản ánh chính xác 100% trải nghiệm thực tế.",
+    "created_at": "05/09/2026 00:30:00",
+    "timestamp": 1788540000.0,
+    "is_default": true
+  },
+  {
+    "id": "RULE_002",
+    "tag": "Nhận Diện Đa Ngôn Ngữ",
+    "content": "Đối với review tiếng Hàn (như '별로', '그냥'), tiếng Nga, Trung, Pháp, Ý, Nhật, Anh... không được nhầm lẫn là ký tự đặc biệt vô nghĩa. Phải tự động nhận diện ngôn ngữ và dịch sang Tiếng Việt trước khi xử lý.",
+    "contribution": "🌐 Mở rộng độ phủ quốc tế của Tool; bảo toàn trọn vẹn ý kiến của du khách nước ngoài thay vì loại nhầm, giúp doanh nghiệp nắm bắt toàn diện chân dung khách hàng toàn cầu.",
+    "created_at": "05/09/2026 00:35:00",
+    "timestamp": 1788540300.0,
+    "is_default": true
+  },
+  {
+    "id": "RULE_003",
+    "tag": "Sửa Teencode & Lỗi Chính Tả",
+    "content": "Nhận diện các từ viết sai phổ biến nhưng dễ đoán (Ví dụ: 'L9cation' là 'Location' -> chuẩn hóa thành 'vị trí', 'tuỵt' -> 'tuyệt', 'qá' -> 'quá') trước khi tách từ NLP.",
+    "contribution": "⚡ Chuẩn hóa ngôn ngữ mạng & lỗi gõ phím về từ điển chuẩn tiếng Việt; giúp thư viện underthesea tách chính xác từ ghép (Bi-grams/Tri-grams) và trích xuất đúng tần suất từ khóa.",
+    "created_at": "05/09/2026 00:40:00",
+    "timestamp": 1788540600.0,
+    "is_default": true
+  }
+]

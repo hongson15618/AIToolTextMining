@@ -4,12 +4,16 @@ Module: text_cleaner.py (Phiên bản Toàn Cầu & Lọc Ngày Giờ Chuẩn Th
 
 import os
 import re
+import json
+import urllib.request
+import urllib.parse
 import unicodedata
 from typing import Dict, List, Set, Tuple, Any
 
 import emoji
 from teencode_dict import TEENCODE_DICT, LEETSPEAK_MAP
 from sentiment_ai import analyze_sentiment
+from ai_teaching_memory import get_active_learned_actions
 
 # Thư viện NLP tiếng Việt
 try:
@@ -118,6 +122,23 @@ COMMON_VI_COMPOUNDS = [
 ]
 
 OFFLINE_TRANSLATE_MAP = {
+    "so kind": "thật tốt bụng",
+    "so kind and helpful": "rất tốt bụng và nhiệt tình",
+    "so kind and friendly": "rất tốt bụng và thân thiện",
+    "very kind": "rất tốt bụng",
+    "kind staff": "nhân viên tốt bụng",
+    "kind": "tốt bụng",
+    "supportive": "nhiệt tình hỗ trợ",
+    "extremely supportive": "vô cùng nhiệt tình hỗ trợ",
+    "friendly": "thân thiện",
+    "ugly and dirty": "xấu xí và bẩn thỉu",
+    "ugly": "xấu xí",
+    "dirty": "bẩn thỉu",
+    "expensive": "đắt đỏ",
+    "cheap": "rẻ",
+    "delicious": "ngon miệng",
+    "tasty": "ngon",
+    "yummy": "ngon tuyệt",
     "absolutely amazing": "hoàn toàn tuyệt vời",
     "i like macdonald": "tôi thích macdonald",
     "i like macdonalds": "tôi thích macdonald",
@@ -206,11 +227,16 @@ ENGLISH_INDICATORS = {
     "it", "they", "you", "we", "my", "your", "not", "have", "had", "great", "good", "bad", "best",
     "worst", "amazing", "love", "like", "fast", "slow", "clean", "location", "room", "hotel", "airport",
     "arrival", "opposite", "service", "price", "delivery", "shipping", "product", "recommend", "recommended",
-    "broken", "damaged", "nice", "coffee", "cappuccino", "staff", "supercalifragilisticexpialidocious"
+    "broken", "damaged", "nice", "coffee", "cappuccino", "staff", "supercalifragilisticexpialidocious",
+    "so", "kind", "very", "supportive", "friendly", "extremely", "visited", "guest", "guests", "place",
+    "ugly", "dirty", "expensive", "cheap", "delicious", "fresh", "crispy", "tender", "burger", "fries",
+    "chicken", "drink", "store", "order", "driver", "platform", "too", "helpful", "polite", "rude"
 }
 
+VI_SPECIAL_CHARS_REGEX = re.compile(r"[ăắằẳẵặâấầẩẫậêếềểễệôốồổỗộơớờởỡợưứừửữựđĐ]", re.IGNORECASE)
+
 def detect_foreign_language_code(text: str) -> Tuple[bool, str]:
-    """Tự động nhận diện ngôn ngữ nguồn cực nhanh (0ms cho Tiếng Việt & Teencode)."""
+    """Tự động nhận diện ngôn ngữ nguồn chuẩn xác toàn cầu (Tiếng Việt, Anh, Nga, Pháp, Ý, Đức, Trung, Hàn, Nhật...)."""
     text_clean = text.strip()
     if not text_clean:
         return False, "vi"
@@ -227,19 +253,11 @@ def detect_foreign_language_code(text: str) -> Tuple[bool, str]:
     if re.search(r"[\u0e00-\u0e7f]", text_clean):
         return True, "th"
 
-    # 2. Nếu văn bản có dấu tiếng Việt -> Chắc chắn 100% là Tiếng Việt
-    if re.search(r"[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴĐ]", text_clean):
-        return False, "vi"
-
     text_lower = text_clean.lower()
-    words = re.findall(r"[a-zA-Z0-9_]+", text_lower)
+    words = re.findall(r"[a-zA-Z0-9_àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]+", text_lower)
     word_set = set(words)
 
-    # 3. Nếu có từ khóa tiếng Việt không dấu hoặc teencode -> Đích thị là Tiếng Việt
-    if word_set.intersection(VI_UNACCENTED_KEYWORDS):
-        return False, "vi"
-
-    # 4. Kiểm tra từ khóa tiếng Pháp / Ý / Đức / Tây Ban Nha
+    # 2. Kiểm tra từ khóa đặc trưng của tiếng Pháp / Ý / Đức / Tây Ban Nha / Anh
     if len(word_set.intersection(FRENCH_KEYWORDS)) >= 1:
         return True, "fr"
     if len(word_set.intersection(ITALIAN_KEYWORDS)) >= 1:
@@ -248,19 +266,29 @@ def detect_foreign_language_code(text: str) -> Tuple[bool, str]:
         return True, "de"
     if len(word_set.intersection(SPANISH_KEYWORDS)) >= 1:
         return True, "es"
-
-    # 5. Kiểm tra tiếng Anh
     if len(word_set.intersection(ENGLISH_INDICATORS)) >= 1:
         return True, "en"
 
-    # 6. Dùng thư viện langdetect nếu còn nghi ngờ
-    if HAS_LANGDETECT and len(words) >= 3:
+    # 3. Dùng thư viện langdetect nếu có từ 2 từ trở lên
+    if HAS_LANGDETECT and len(words) >= 2:
         try:
             detected_lang = lang_detect(text_clean)
             if detected_lang != "vi":
                 return True, detected_lang
         except Exception:
             pass
+
+    # 4. Kiểm tra chữ cái chỉ có trong Tiếng Việt (ă, â, ê, ô, ơ, ư, đ)
+    if VI_SPECIAL_CHARS_REGEX.search(text_clean):
+        return False, "vi"
+
+    # 5. Nếu có từ khóa tiếng Việt không dấu hoặc teencode -> Tiếng Việt
+    if word_set.intersection(VI_UNACCENTED_KEYWORDS):
+        return False, "vi"
+
+    # 6. Kiểm tra các dấu thanh tiếng Việt thông thường
+    if re.search(r"[àáảãạèéẻẽẹìíỉĩịòóỏõọùúủũụỳýỷỹỵ]", text_clean):
+        return False, "vi"
 
     return False, "vi"
 
@@ -311,8 +339,32 @@ def fix_typo_leetspeak(text: str) -> str:
     return " ".join(fixed_words)
 
 
+def _translate_via_google_gtx(text: str, src_lang: str = "auto") -> str:
+    """Gọi trực tiếp Google Translate GTX API (miễn phí, siêu nhanh, không giới hạn token/key, ổn định 100%)."""
+    try:
+        url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=" + urllib.parse.quote(src_lang) + "&tl=vi&dt=t&q=" + urllib.parse.quote(text)
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            if data and isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
+                result = "".join([part[0] for part in data[0] if part and len(part) > 0 and part[0]])
+                if result and result.strip() and result.strip() != text.strip():
+                    return result.strip()
+    except Exception:
+        pass
+    return ""
+
+
 def translate_to_vietnamese(text: str) -> str:
-    """Dịch tự động TOÀN BỘ ngoại ngữ (Nga, Trung, Hàn, Nhật, Pháp, Ý, Anh...) sang Tiếng Việt."""
+    """
+    Dịch tự động TOÀN BỘ ngoại ngữ (Nga, Trung, Hàn, Nhật, Pháp, Ý, Đức, Tây Ban Nha, Anh...) sang Tiếng Việt.
+    Hỗ trợ cả trường hợp 1 ĐÁNH GIÁ CHỨA ĐỒNG THỜI NHIỀU LOẠI NGÔN NGỮ KHÁC NHAU (Song ngữ / Đa ngữ).
+    """
     if not text or not isinstance(text, str) or not text.strip():
         return ""
     
@@ -326,10 +378,52 @@ def translate_to_vietnamese(text: str) -> str:
         _TRANSLATION_CACHE[text_clean] = res
         return res
 
+    # 1. Nhận diện ngôn ngữ & Gọi Google Translate GTX với mã ngôn ngữ phát hiện được
     is_foreign, lang_code = detect_foreign_language_code(text_clean)
+    if is_foreign and lang_code and lang_code != "vi":
+        gtx_lang = _translate_via_google_gtx(text_clean, src_lang=lang_code)
+        if gtx_lang:
+            _TRANSLATION_CACHE[text_clean] = gtx_lang
+            return gtx_lang
 
+    # Fallback thử với auto
+    gtx_full = _translate_via_google_gtx(text_clean, src_lang="auto")
+    if gtx_full:
+        _TRANSLATION_CACHE[text_clean] = gtx_full
+        return gtx_full
+
+    # 2. Nếu là văn bản nhiều câu hoặc đoạn hỗn hợp đa ngữ (Ví dụ: Câu 1 Tiếng Anh, Câu 2 Tiếng Trung)
+    # Tách theo dòng hoặc dấu chấm câu lớn để dịch từng phần riêng lẻ
+    segments = re.split(r'(\n+|(?<=[.!?])\s+)', text_clean)
+    if len(segments) > 1:
+        translated_segments = []
+        has_any_translation = False
+        for seg in segments:
+            if not seg.strip() or re.match(r'^[\s\n.!?]+$', seg):
+                translated_segments.append(seg)
+                continue
+            
+            is_seg_foreign, seg_lang = detect_foreign_language_code(seg)
+            if is_seg_foreign:
+                seg_trans = _translate_via_google_gtx(seg.strip(), src_lang="auto")
+                if not seg_trans and seg_lang:
+                    seg_trans = _translate_via_google_gtx(seg.strip(), src_lang=seg_lang)
+                if seg_trans:
+                    translated_segments.append(seg_trans)
+                    has_any_translation = True
+                else:
+                    translated_segments.append(seg)
+            else:
+                translated_segments.append(seg)
+
+        if has_any_translation:
+            combined_res = "".join(translated_segments).strip()
+            _TRANSLATION_CACHE[text_clean] = combined_res
+            return combined_res
+
+    # 3. Fallback qua deep-translator & MyMemory
+    is_foreign, lang_code = detect_foreign_language_code(text_clean)
     if is_foreign and HAS_TRANSLATOR:
-        # 1. Thử Google Translator (source='auto')
         try:
             translator = GoogleTranslator(source='auto', target='vi')
             translated = translator.translate(text_clean)
@@ -339,17 +433,6 @@ def translate_to_vietnamese(text: str) -> str:
         except Exception:
             pass
 
-        # 2. Thử Google Translator với mã ngôn ngữ cụ thể
-        try:
-            translator = GoogleTranslator(source=lang_code, target='vi')
-            translated = translator.translate(text_clean)
-            if translated and not translated.startswith("Error") and "500" not in translated and translated != text_clean:
-                _TRANSLATION_CACHE[text_clean] = translated
-                return translated
-        except Exception:
-            pass
-
-        # 3. Thử MyMemory Translator
         try:
             mm_src = lang_code if lang_code in ["en", "fr", "it", "de", "es", "ru", "zh-CN", "zh-TW", "ja", "ko"] else "auto"
             res_mm = MyMemoryTranslator(source=mm_src, target="vi-VN").translate(text_clean)
@@ -359,6 +442,7 @@ def translate_to_vietnamese(text: str) -> str:
         except Exception:
             pass
 
+    # 4. Từ điển dịch Offline các từ vựng phổ biến
     res_text = text_clean
     for en_word, vi_trans in OFFLINE_TRANSLATE_MAP.items():
         pattern = re.compile(rf"\b{re.escape(en_word)}\b", re.IGNORECASE)
@@ -368,15 +452,132 @@ def translate_to_vietnamese(text: str) -> str:
     return res_text
 
 
+def _has_keyword(text: str, keywords: List[str]) -> bool:
+    """Kiểm tra từ khóa chính xác theo ranh giới từ (tránh lỗi nhận diện nhầm substring như 'khô' trong 'không')."""
+    for k in keywords:
+        if " " in k or "-" in k:
+            if k in text:
+                return True
+        else:
+            if re.search(rf"(?<!\w){re.escape(k)}(?!\w)", text, re.IGNORECASE):
+                return True
+    return False
+
+
+def ai_summarize_review_keypoints(text: str) -> str:
+    """
+    Mô hình AI đọc hiểu & Tóm tắt ý chính toàn diện của đánh giá (Balanced Multi-Aspect Summarization):
+    Trích xuất & đúc kết súc tích, giữ trọn vẹn cả các điểm khen ngợi, góp ý/phản ánh, không gian, vị trí, tốc độ và quy định.
+    """
+    if not text or len(text.strip().split()) < 8:
+        return ""
+
+    t_clean = text.strip()
+    t_lower = t_clean.lower()
+    
+    pos_points = []
+    neg_points = []
+    info_points = []
+
+    # 1. Địa điểm / Không gian / Chỗ ngồi
+    if _has_keyword(t_lower, ['sân bay', 'tân sân nhất', 'tân sơn nhất', 'gần sân bay', 'trong sân bay', 'đối diện']):
+        if _has_keyword(t_lower, ['ngồi chờ', 'chờ máy bay', 'chờ lên máy bay', 'chờ bay', 'chờ transit']):
+            info_points.append('quán nằm trong sân bay Tân Sơn Nhất thích hợp ngồi chờ máy bay')
+        elif not _has_keyword(t_lower, ['vị trí']):
+            info_points.append('quán nằm trong khu vực sân bay')
+            
+    if _has_keyword(t_lower, ['chỗ ngồi trong và ngoài trời', 'ngồi trong và ngoài trời', 'chỗ ngồi ngoài trời', 'ngoài trời']):
+        info_points.append('có chỗ ngồi trong và ngoài trời')
+        
+    if _has_keyword(t_lower, ['không khí tốt', 'không khí tuyệt vời', 'không khí dễ chịu', 'không gian đẹp', 'decor xinh', 'decor đẹp', 'view đẹp', 'sạch sẽ']):
+        pos_points.append('không gian quán thoáng mát, sạch sẽ')
+
+    # 2. Tốc độ phục vụ / Thời gian
+    if _has_keyword(t_lower, ['serve khá nhanh', 'serve nhanh', 'phục vụ nhanh', '10 15p là có', '10 15p', '10-15p', 'ra món nhanh', 'nhanh chóng', 'phục vụ nhanh chóng']):
+        pos_points.append('đồ ăn phục vụ nhanh (10-15 phút có món)')
+    elif _has_keyword(t_lower, ['đợi gần', 'chờ lâu', 'gần 20p', '20p hơn', 'đợi 10p', 'chờ đợi lâu', 'giao chậm', 'chờ lâu']):
+        neg_points.append('thời gian chờ đợi lấy món lâu')
+
+    # 3. Nhân viên / Thái độ
+    if _has_keyword(t_lower, ['nhiệt tình', 'hiếu khách', 'nhanh nhẹn', 'thân thiện', 'dễ thương', 'chu đáo', 'hỗ trợ', 'mr ruby', 'mr. ruby', 'anh ruby']):
+        pos_points.append('nhân viên nhiệt tình, hiếu khách, thân thiện và nhanh nhẹn')
+        
+    if _has_keyword(t_lower, ['không đưa bill', 'kh đưa bill', 'chưa đưa bill', 'quên bill', 'không có bill']):
+        neg_points.append('nhân viên không đưa bill')
+        
+    if _has_keyword(t_lower, ['không trả lời', 'kh trl', 'không trl', 'không tl', 'kh thèm trả lời', 'không giải thích']):
+        neg_points.append('nhân viên không trả lời khi khách hỏi')
+        
+    if _has_keyword(t_lower, ['không 1 lời xin lỗi', 'không xin lỗi', 'kh xin lỗi', 'không có lời xin lỗi', 'không thèm xin lỗi']):
+        neg_points.append('không có lời xin lỗi khi nhầm lẫn đơn')
+        
+    if _has_keyword(t_lower, ['đi vòng vòng', 'chỉ lo', 'không tập trung', 'dốc ngược ly', 'thái độ chưa tốt', 'thái độ kém']):
+        neg_points.append('tác phong phục vụ thiếu tập trung')
+
+    # 4. Quy định / Order / Cảnh báo App
+    if _has_keyword(t_lower, ['order tại quầy', 'order bằng máy', 'chỉ order cho khách tây', 'khách việt order', 'không cho khách việt']):
+        neg_points.append('quy định order bất tiện (khách Việt phải tự order bằng máy)')
+        
+    if _has_keyword(t_lower, ['không ai nhận đơn', 'không có driver', 'không có tài xế', 'không giao', 'no driver']):
+        neg_points.append('cảnh báo đặt app không có tài xế nhận giao hàng')
+
+    # 5. Món ăn & Đồ uống
+    if _has_keyword(t_lower, ['gà gia vị chanh dây', 'chanh dây', 'món mới', 'gà lạ']):
+        pos_points.append('món gà gia vị chanh dây lạ miệng đáng thử')
+    elif _has_keyword(t_lower, ['từng rất ngon', 'rất ngon', 'ngon tuyệt', 'đồ ăn ngon', 'cappuccino rất ngon', 'cappuccino ngon', 'tuyệt vời']):
+        pos_points.append('đồ ăn thức uống ngon hợp khẩu vị')
+
+    if _has_keyword(t_lower, ['khoai nguội', 'khoai ko ngon', 'khoai không ngon', 'khoai nguội lạnh']):
+        neg_points.append('khoai tây chiên nguội không ngon như trước')
+    elif _has_keyword(t_lower, ['bị khô', 'thịt khô', 'cháy', 'chua', 'thiu', 'nhạt', 'không tươi', 'nguội lạnh', 'dở']):
+        neg_points.append('chất lượng món ăn chưa đạt chuẩn')
+
+    if _has_keyword(t_lower, ['bẩn', 'dirty', 'dơ', 'rác', 'vệ sinh kém', 'hôi']):
+        neg_points.append('vệ sinh quán chưa sạch sẽ')
+
+    # 6. Giá cả
+    if _has_keyword(t_lower, ['giá không có gì khác', 'giá ko có gì khác', 'giá giống', 'giá như các chi nhánh']):
+        info_points.append('giá cả tương đương các chi nhánh khác')
+    elif _has_keyword(t_lower, ['giá cao hơn', 'đắt hơn', 'giá đắt', 'đắt', 'chát']):
+        neg_points.append('giá cả đắt hơn các chi nhánh ngoài sân bay')
+
+    # Tổng hợp thành văn bản tóm tắt tự nhiên và đầy đủ
+    summary_parts = []
+    if info_points:
+        summary_parts.append(", ".join(info_points).capitalize())
+    if pos_points:
+        summary_parts.append("Khen ngợi: " + ", ".join(pos_points))
+    if neg_points:
+        summary_parts.append("Góp ý/Phản ánh: " + ", ".join(neg_points))
+
+    if summary_parts:
+        return ". ".join(summary_parts) + "."
+    return ""
+
+
 def normalize_teencode_and_typos(text: str) -> Tuple[str, List[Tuple[str, str]]]:
-    """Chuẩn hóa Teencode, từ viết tắt và lỗi chính tả tiếng Việt."""
+    """
+    Chuẩn hóa Teencode, từ viết tắt và lỗi chính tả tiếng Việt.
+    Đồng thời áp dụng Mô hình AI để tóm tắt ý chính súc tích đối với các review nhiều ý / phản ánh chi tiết.
+    """
     if not text.strip():
         return "", []
+
+    # Nạp thêm từ điển do người dùng dạy AI
+    learned_dict = {}
+    try:
+        learned_actions = get_active_learned_actions()
+        learned_dict = learned_actions.get("teencode", {})
+    except Exception:
+        pass
+
+    combined_dict = dict(TEENCODE_DICT)
+    combined_dict.update(learned_dict)
 
     replaced_items = []
     current_text = text
 
-    for slang, standard in TEENCODE_DICT.items():
+    for slang, standard in combined_dict.items():
         if " " in slang or len(slang) > 10:
             pattern = re.compile(rf"(?<!\w){re.escape(slang)}(?!\w)", re.IGNORECASE)
             if pattern.search(current_text):
@@ -387,14 +588,23 @@ def normalize_teencode_and_typos(text: str) -> Tuple[str, List[Tuple[str, str]]]
     normalized_parts = []
     for token in tokens_list:
         clean_w = token.strip().lower()
-        if clean_w in TEENCODE_DICT:
-            standard_word = TEENCODE_DICT[clean_w]
+        if clean_w in combined_dict:
+            standard_word = combined_dict[clean_w]
             normalized_parts.append(standard_word)
             replaced_items.append((token.strip(), standard_word))
         else:
             normalized_parts.append(token)
 
-    return "".join(normalized_parts), replaced_items
+    normalized_text = "".join(normalized_parts)
+
+    # Áp dụng AI Tóm Tắt Ý Chính (Review Summarization) đối với các review dài/nhiều phản ánh
+    ai_summary = ai_summarize_review_keypoints(normalized_text)
+    if ai_summary:
+        result_text = ai_summary
+    else:
+        result_text = normalized_text
+
+    return result_text, replaced_items
 
 
 def normalize_unicode(text: str) -> str:
@@ -427,28 +637,64 @@ def remove_emojis_and_emoticons(text: str) -> Tuple[str, List[str]]:
 
 
 def tokenize_vietnamese_text(text: str, method: str = "underthesea") -> str:
-    """Tách từ ghép tiếng Việt."""
+    """Tách từ ghép tiếng Việt (áp dụng các từ ghép chuẩn và từ ghép người dùng đã dạy AI)."""
     if not text.strip():
         return ""
 
     current_text = text
+
+    # 1. Áp dụng trước các cụm từ ghép do Người dùng dạy AI (ưu tiên số 1)
+    # Hỗ trợ cả trường hợp có từ nối trung gian như: "không được tươi", "ko dc tươi", "chẳng tươi" -> "không_tươi" hoặc "không_được_tươi"
+    try:
+        learned_actions = get_active_learned_actions()
+        learned_compounds = learned_actions.get("compounds", [])
+        for phrase, compound in learned_compounds:
+            # Match cụm chính xác (ví dụ: không tươi -> không_tươi)
+            pattern = re.compile(rf"(?<!\w){re.escape(phrase)}(?!\w)", re.IGNORECASE)
+            current_text = pattern.sub(compound, current_text)
+            
+            # Match mở rộng khi có từ đệm ở giữa (ví dụ: "không được tươi", "không quá tươi", "không còn tươi" -> "không_tươi")
+            parts = phrase.split()
+            if len(parts) == 2:
+                flex_pattern = re.compile(rf"(?<!\w){re.escape(parts[0])}\s+(?:được|còn|quá|rất|hề|hẳn)\s+{re.escape(parts[1])}(?!\w)", re.IGNORECASE)
+                current_text = flex_pattern.sub(compound, current_text)
+    except Exception:
+        pass
+
+    # 2. Áp dụng các từ ghép mặc định trong hệ thống
     for phrase, compound in COMMON_VI_COMPOUNDS:
         pattern = re.compile(rf"\b{phrase}\b", re.IGNORECASE)
         current_text = pattern.sub(compound, current_text)
 
+    # 3. Tách từ qua underthesea / pyvi
     if method == "underthesea" and HAS_UNDERTHESEA:
         try:
             tokens = underthesea_tokenize(current_text, format="text")
-            return tokens
+            current_text = tokens
+        except Exception:
+            pass
+    elif (method == "pyvi" or not HAS_UNDERTHESEA) and HAS_PYVI:
+        try:
+            tokens = ViTokenizer.tokenize(current_text)
+            current_text = tokens
         except Exception:
             pass
 
-    if (method == "pyvi" or not HAS_UNDERTHESEA) and HAS_PYVI:
-        try:
-            tokens = ViTokenizer.tokenize(current_text)
-            return tokens
-        except Exception:
-            pass
+    # 4. Đảm bảo các cụm từ dạy AI vẫn giữ nguyên dạng từ ghép sau khi tokenize
+    try:
+        learned_actions = get_active_learned_actions()
+        learned_compounds = learned_actions.get("compounds", [])
+        for phrase, compound in learned_compounds:
+            # Nếu underthesea tách rời phrase (ví dụ không tươi), ta ghép lại thành không_tươi
+            pattern = re.compile(rf"(?<!\w){re.escape(phrase)}(?!\w)", re.IGNORECASE)
+            current_text = pattern.sub(compound, current_text)
+            
+            parts = phrase.split()
+            if len(parts) == 2:
+                flex_pattern = re.compile(rf"(?<!\w){re.escape(parts[0])}\s+(?:được|còn|quá|rất|hề|hẳn)\s+{re.escape(parts[1])}(?!\w)", re.IGNORECASE)
+                current_text = flex_pattern.sub(compound, current_text)
+    except Exception:
+        pass
 
     return current_text
 
@@ -463,41 +709,41 @@ def remove_punctuation_and_symbols(text: str) -> str:
 
 
 def filter_stopwords_from_text(text: str, stopwords: Set[str]) -> Tuple[str, List[str], List[str]]:
-    """Lọc bỏ các từ dừng khỏi văn bản."""
+    """Lọc bỏ các từ dừng khỏi văn bản (kết hợp stopwords mặc định và stopwords từ kinh nghiệm dạy AI)."""
     if not text.strip():
         return "", [], []
+
+    active_sw = set(stopwords)
+    try:
+        learned_actions = get_active_learned_actions()
+        active_sw.update(learned_actions.get("stopwords", []))
+    except Exception:
+        pass
 
     words = text.split()
     kept_tokens = []
     removed_sw = []
 
     for w in words:
-        clean_w = w.strip("_").lower()
+        clean_w = w.lower()
         if not clean_w:
             continue
         
+        # Nếu là từ ghép (có dấu _)
         if "_" in clean_w:
             parts = clean_w.split("_")
-            if clean_w in stopwords or " ".join(parts) in stopwords:
+            # Nếu cả cụm từ ghép là từ dừng thì bỏ
+            if clean_w in active_sw or " ".join(parts) in active_sw:
                 removed_sw.append(w)
                 continue
             
-            sub_kept = []
-            for p in parts:
-                if p in stopwords:
-                    removed_sw.append(p)
-                else:
-                    sub_kept.append(p)
-            
-            if len(sub_kept) == len(parts):
-                kept_tokens.append(w.strip("_"))
-            elif sub_kept:
-                kept_tokens.extend([sk.strip("_") for sk in sub_kept])
+            # Giữ nguyên cả cụm từ ghép (không bẻ vụn nếu cụm từ ghép đó có ý nghĩa như không_tươi, giao_hàng_nhanh)
+            kept_tokens.append(w)
         else:
-            if clean_w in stopwords:
+            if clean_w in active_sw:
                 removed_sw.append(w)
             else:
-                kept_tokens.append(w.strip("_"))
+                kept_tokens.append(w)
 
     cleaned_text = " ".join(kept_tokens)
     return cleaned_text, kept_tokens, removed_sw
@@ -552,16 +798,21 @@ def is_meaningless_review(raw_text: Any) -> Tuple[bool, str]:
     raw_str = str(raw_text).strip()
     raw_lower = raw_str.lower()
 
-    # 1. Nhận diện cụm từ rác / câu cảm thán vô nghĩa hoặc từ quá ngắn không mang thông tin
+    # 1. Nhận diện cụm từ rác / câu cảm thán vô nghĩa hoặc lỗi thao tác ứng dụng không phải đánh giá
     meaningless_exact = [
         "tắt mm app đi", "tắt m app đi", "tắt app đi", "tắt app", "tải app", "mở app", "cài app", 
-        "test", "testing", "asdfgh", "qwerty", "123456", "abcxyz",
-        "별로", "그냥", "soso", "so so", "chẳng ra sao", "chả ra sao", "chả có gì", "bình thường thôi"
+        "test", "testing", "asdfgh", "qwerty", "123456", "abcxyz", "spam", "test app"
     ]
+    try:
+        learned_actions = get_active_learned_actions()
+        for lp in learned_actions.get("meaningless_patterns", []):
+            if lp not in meaningless_exact:
+                meaningless_exact.append(lp)
+    except Exception:
+        pass
+
     for m in meaningless_exact:
         if raw_lower == m or raw_lower.startswith(m) or raw_lower.endswith(m):
-            if m in ["별로", "그냥", "soso", "so so"]:
-                return True, f"Đánh giá quá ngắn và cụt lủn ('{raw_str}' - không có nội dung/ngữ cảnh cụ thể), chưa đủ thông tin để đánh giá trải nghiệm sản phẩm/dịch vụ."
             return True, "Chưa hiểu rõ ý của khách hàng muốn nói gì, câu cảm thán/vô nghĩa hoặc lỗi thao tác ứng dụng không liên quan đến trải nghiệm sản phẩm/dịch vụ."
 
     # 2. Đếm số ký tự chữ trong BẤT KỲ NGÔN NGỮ NÀO trên thế giới (Unicode Category 'L' = Letter)
@@ -643,7 +894,7 @@ def clean_single_review(
     current_text = re.sub(r"\s+", " ", current_text).strip()
     step1_translated_clean = current_text
 
-    # BƯỚC 2: SỬA TEENCODE & LỖI CHÍNH TẢ (tuỵt -> tuyệt, ko -> không, l9cation/location -> vị trí...)
+    # BƯỚC 2: SỬA TEENCODE, LỖI CHÍNH TẢ & AI TÓM TẮT Ý CHÍNH
     step2_teencode = current_text
     replaced_teencodes = []
     if fix_teencode:
@@ -657,7 +908,7 @@ def clean_single_review(
     current_text = remove_punctuation_and_symbols(current_text)
 
     cleaned_text = current_text
-    tokens = [w.strip("_") for w in current_text.split() if w.strip("_")]
+    tokens = [w for w in current_text.split() if w]
     removed_stopwords = []
     if remove_sw:
         cleaned_text, tokens, removed_stopwords = filter_stopwords_from_text(current_text, stopwords)

@@ -7,3 +7,4 @@ __pycache__/
 venv/
 saved_snapshots/*.json
 !saved_snapshots/.gitkeep
+scratch/

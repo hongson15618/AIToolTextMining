@@ -43,11 +43,15 @@ from snapshot_manager import (
     load_snapshot,
     delete_snapshot
 )
+import importlib
+import ai_teaching_memory
+importlib.reload(ai_teaching_memory)
 from ai_teaching_memory import (
     load_teaching_memory,
     add_teaching_rule,
     delete_teaching_rule,
-    get_teaching_context_for_ai
+    get_teaching_context_for_ai,
+    analyze_contribution
 )
 
 # Cấu hình trang Streamlit
@@ -315,14 +319,124 @@ st.markdown("""
 STOPWORDS_FILE = os.path.join(os.path.dirname(__file__), "vietnamese_stopwords.txt")
 default_stopwords = load_stopwords(STOPWORDS_FILE)
 
+def render_dark_dataframe(df_to_render: pd.DataFrame, max_height: str = "600px") -> str:
+    if df_to_render is None or df_to_render.empty:
+        return '<div style="color:#94a3b8; font-style:italic;">(Không có dữ liệu)</div>'
+        
+    columns = list(df_to_render.columns)
+    
+    # Headers
+    th_html_list = []
+    for c in columns:
+        c_str = str(c)
+        c_l = c_str.lower()
+        if any(k in c_l for k in ["stt", "id", "mã"]):
+            th_html_list.append(f'<th style="width: 60px; text-align: center;">{c_str}</th>')
+        elif any(k in c_l for k in ["tháng"]):
+            th_html_list.append(f'<th style="width: 80px; text-align: center;">{c_str}</th>')
+        elif any(k in c_l for k in ["cảm xúc", "sentiment"]):
+            th_html_list.append(f'<th style="width: 140px; text-align: center;">{c_str}</th>')
+        elif any(k in c_l for k in ["ngành hàng", "đánh giá", "tình trạng", "phân loại", "chủ đề"]):
+            th_html_list.append(f'<th style="width: 150px;">{c_str}</th>')
+        elif any(k in c_l for k in ["tokens"]):
+            th_html_list.append(f'<th style="width: 18%;">{c_str}</th>')
+        elif any(k in c_l for k in ["đóng góp"]):
+            th_html_list.append(f'<th style="min-width: 260px;">{c_str}</th>')
+        elif any(k in c_l for k in ["bình luận", "review", "text", "dịch", "sửa", "clean", "nội dung"]):
+            th_html_list.append(f'<th style="min-width: 200px;">{c_str}</th>')
+        else:
+            th_html_list.append(f'<th>{c_str}</th>')
+            
+    header_tr = "".join(th_html_list)
+    
+    # Rows
+    rows_html_list = []
+    for idx, row in df_to_render.iterrows():
+        row_str = " ".join([str(v) for v in row.values])
+        is_removed = ("LOẠI" in row_str) or ("Đã loại bỏ" in row_str) or ("❌" in row_str)
+        
+        row_class = "removed-row" if is_removed else ""
+        
+        td_html_list = []
+        for c in columns:
+            val = row[c]
+            val_str = str(val) if val is not None else ""
+            c_l = str(c).lower()
+            
+            if "cảm xúc" in c_l or "sentiment" in c_l:
+                if "Tích cực" in val_str or "🟢" in val_str:
+                    td_html_list.append(f'<td class="sent-cell"><span class="diff-badge badge-pos">{val_str}</span></td>')
+                elif "Tiêu cực" in val_str or "🔴" in val_str:
+                    td_html_list.append(f'<td class="sent-cell"><span class="diff-badge badge-neg">{val_str}</span></td>')
+                elif "LOẠI" in val_str or "Đã loại" in val_str:
+                    td_html_list.append(f'<td class="sent-cell"><span class="diff-badge badge-loai">{val_str}</span></td>')
+                elif val_str and val_str != "-":
+                    td_html_list.append(f'<td class="sent-cell"><span class="diff-badge badge-neu">{val_str}</span></td>')
+                else:
+                    td_html_list.append('<td class="sent-cell">-</td>')
+            elif any(k in c_l for k in ["stt", "id", "mã"]):
+                td_html_list.append(f'<td class="stt-cell">{val_str}</td>')
+            elif "tokens" in c_l:
+                if val_str and val_str != "LOẠI":
+                    td_html_list.append(f'<td class="token-cell"><code>{val_str}</code></td>')
+                elif val_str == "LOẠI":
+                    td_html_list.append('<td class="token-cell"><span style="color:#f87171; font-weight:700;">LOẠI</span></td>')
+                else:
+                    td_html_list.append('<td></td>')
+            elif "clean" in c_l:
+                if val_str == "LOẠI":
+                    td_html_list.append('<td class="clean-cell" style="color:#f87171; font-weight:700;">LOẠI</td>')
+                else:
+                    td_html_list.append(f'<td class="clean-cell">{val_str}</td>')
+            elif "dịch" in c_l:
+                if val_str == "LOẠI":
+                    td_html_list.append('<td style="color:#f87171; font-weight:700;">LOẠI</td>')
+                else:
+                    td_html_list.append(f'<td>{val_str}</td>')
+            elif "sửa" in c_l or "teencode" in c_l:
+                if val_str == "LOẠI":
+                    td_html_list.append('<td style="color:#f87171; font-weight:700;">LOẠI</td>')
+                elif "✨ [AI TÓM TẮT Ý CHÍNH]:" in val_str:
+                    parts = val_str.split("📝 [VĂN BẢN ĐÃ SỬA TEENCODE]:")
+                    sum_part = parts[0].replace("✨ [AI TÓM TẮT Ý CHÍNH]:", "").strip()
+                    main_part = parts[1].strip() if len(parts) > 1 else ""
+                    cell_html = (
+                        f'<div style="background:rgba(56, 189, 248, 0.12); border:1px solid rgba(56, 189, 248, 0.4); border-radius:6px; padding:6px 10px; margin-bottom:6px; font-size:0.85rem; color:#38BDF8;">'
+                        f'💡 <b>AI Tóm tắt:</b> {sum_part}'
+                        f'</div>'
+                        f'<div style="color:#CBD5E1; font-size:0.83rem;">{main_part}</div>'
+                    )
+                    td_html_list.append(f'<td>{cell_html}</td>')
+                else:
+                    td_html_list.append(f'<td>{val_str}</td>')
+            elif "tình trạng" in c_l:
+                td_html_list.append(f'<td><span class="diff-badge badge-neg">{val_str}</span></td>')
+            else:
+                td_html_list.append(f'<td>{val_str}</td>')
+                
+        tr_html = f'<tr class="{row_class}">{"".join(td_html_list)}</tr>'
+        rows_html_list.append(tr_html)
+        
+    tbody_html = "".join(rows_html_list)
+    
+    scroll_style = f"height: {max_height}; min-height: 320px; resize: vertical; overflow: auto;" if max_height else "resize: vertical; overflow: auto;"
+    return (
+        f'<div class="diff-table-container" style="{scroll_style}">'
+        '<table class="dark-diff-table">'
+        f'<thead><tr>{header_tr}</tr></thead>'
+        f'<tbody>{tbody_html}</tbody>'
+        '</table>'
+        '</div>'
+    )
+
 # Watermark Banner
 st.markdown("""
 <div class="watermark-banner">
     <div class="brand">
-        ⚡ <b>UEH MARKETING ANALYTICS PLATFORM</b> — Hệ thống Xử lý & Phân tích Đánh giá Khách hàng
+        ⚡ <b>Tool được thiết kế dành riêng cho môn học</b>
     </div>
     <div class="author">
-        ✨ <i>Tool được thiết kế bởi Sơn — liên hệ <span style="color: #38BDF8; font-weight: 700;">0776.941.932</span></i>
+        ✨ <i>Tool được thiết kế bởi sinh viên chỉ nhằm mục đích học tập — liên hệ <span style="color: #38BDF8; font-weight: 700;">0776.941.932</span></i>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -334,13 +448,77 @@ st.markdown("""
     <p>Giải pháp phân tích ý kiến khách hàng toàn diện: Dịch đa ngôn ngữ, Lọc ngày giờ, Tần suất từ, Top cụm từ (Bar Chart & Word Cloud), Chấm điểm cảm xúc (Xanh/Đỏ/Vàng) & Khám phá chủ đề (LDA).</p>
     <div style="margin-top: 10px;">
         <span class="badge-step">🧹 1. Dịch thuật & Làm sạch</span>
-        <span class="badge-step">📈 2. Tần suất từ & Top Cụm từ</span>
-        <span class="badge-step">☁️ 3. Word Cloud Bigrams</span>
-        <span class="badge-step">🟢🔴🟡 4. Cảm xúc AI</span>
-        <span class="badge-step">🎯 5. Chủ đề LDA</span>
+        <span class="badge-step">🟢🔴🟡 2. Phân tích Cảm xúc AI</span>
+        <span class="badge-step">📊 3. Báo cáo Phân tích Chuyên sâu (Tần suất, Word Cloud, LDA)</span>
     </div>
 </div>
 """, unsafe_allow_html=True)
+
+# Dialog Popup: Lịch Sử Dạy AI & Bảng Đóng Góp Cải Tiến
+@st.dialog("🧠 Lịch Sử Dạy AI — Bảng Tri Thức & Đóng Góp Cải Tiến Tool", width="large")
+def show_teaching_memory_dialog():
+    st.markdown("""
+    <div style="background:rgba(56, 189, 248, 0.1); border:1px solid #0284C7; border-radius:10px; padding:12px 16px; margin-bottom:16px; font-size:0.9rem; color:#E2E8F0;">
+        💡 <b>Mục đích Lịch Sử Dạy AI:</b> Ghi nhận lại mọi quy tắc và kinh nghiệm mà bạn đã hướng dẫn cho AI. Hệ thống sẽ <b>tự động phân tích giá trị đóng góp</b> của từng bài học trong việc nâng cao độ chính xác tiền xử lý NLP và phân tích cảm xúc.
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # 1. Khu vực dạy AI bài học mới
+    with st.expander("➕ Dạy Kiến Thức / Quy Tắc Mới Cho AI", expanded=True):
+        col_t1, col_t2 = st.columns([3, 1])
+        with col_t1:
+            dlg_teach_content = st.text_area(
+                "Nội dung dạy AI:",
+                placeholder="Ví dụ: Dạy AI: STT 9 loại vì câu vô nghĩa, không có ý nghĩa marketing...",
+                key="dlg_input_teach",
+                height=85
+            )
+        with col_t2:
+            dlg_tag_choice = st.selectbox(
+                "Phân loại chủ đề:",
+                options=["Tự động nhận diện", "Tách Từ Ghép & NLP", "Lọc Review Vô Nghĩa", "Nhận Diện Đa Ngôn Ngữ", "Sửa Lỗi Chính Tả & Teencode", "Phân Tích Cảm Xúc AI", "Từ Dừng Ngữ Cảnh"],
+                key="dlg_select_tag"
+            )
+            btn_save_lesson = st.button("🧠 Ghi Nhớ & Phân Tích", type="primary", use_container_width=True, key="dlg_btn_save_lesson")
+            
+        if btn_save_lesson:
+            if dlg_teach_content.strip():
+                final_tag = "Tùy Chỉnh" if dlg_tag_choice == "Tự động nhận diện" else dlg_tag_choice
+                new_rule = add_teaching_rule(dlg_teach_content, final_tag)
+                st.toast(f"✅ AI đã học và phân tích đóng góp thành công: [{new_rule['tag']}]!", icon="🧠")
+                st.rerun()
+            else:
+                st.warning("Vui lòng nhập nội dung muốn dạy AI trước khi lưu.")
+
+    st.markdown("---")
+    
+    # 2. Bảng Lịch Sử Dạy AI & Cột ĐÓNG GÓP
+    rules_mem = load_teaching_memory()
+    st.markdown(f"#### 📚 Bảng Tổng Hợp Tri Thức & Đóng Góp Cải Tiến ({len(rules_mem)} bài học đã nạp):")
+    
+    df_rules_table = pd.DataFrame({
+        "STT": [idx + 1 for idx in range(len(rules_mem))],
+        "Phân Loại": [f"🏷️ {r.get('tag', 'Quy tắc')}" for r in rules_mem],
+        "Nội Dung Người Dùng Đã Dạy": [r.get("content", "") for r in rules_mem],
+        "ĐÓNG GÓP CHO TOOL (AI TỰ ĐỘNG PHÂN TÍCH)": [r.get("contribution", analyze_contribution(r.get("content", ""), r.get("tag", ""))) for r in rules_mem],
+        "Thời Gian": [r.get("created_at", "") for r in rules_mem]
+    })
+    
+    st.markdown(render_dark_dataframe(df_rules_table, max_height="480px"), unsafe_allow_html=True)
+    
+    # 3. Quản lý xóa bài học tùy chỉnh
+    custom_rules = [r for r in rules_mem if not r.get("is_default", False)]
+    if custom_rules:
+        with st.expander("🗑️ Quản Lý & Xóa Quy Tắc Tùy Chỉnh", expanded=False):
+            del_id = st.selectbox(
+                "Chọn bài học muốn xóa:",
+                options=[r["id"] for r in custom_rules],
+                format_func=lambda x: f"[{x}] {next((r['content'][:60] + '...' for r in custom_rules if r['id'] == x), x)}"
+            )
+            if st.button("🗑️ Xóa bài học này khỏi bộ nhớ AI", type="secondary", use_container_width=True):
+                delete_teaching_rule(del_id)
+                st.toast("Đã xóa bài học khỏi bộ nhớ AI!", icon="🗑️")
+                st.rerun()
 
 # SIDEBAR
 with st.sidebar:
@@ -436,54 +614,12 @@ with st.sidebar:
                 st.write("")
 
     # -------------------------------------------------------------------------
-    # PHẦN LỊCH SỬ DẠY AI - TOOL (AI TEACHING MEMORY LOG)
+    # PHẦN LỊCH SỬ DẠY AI - TOOL (POPUP MODAL & BẢNG ĐÓNG GÓP)
     # -------------------------------------------------------------------------
-    with st.expander("🧠 Lịch Sử Dạy AI — Tool", expanded=False):
-        st.markdown("""
-        <div style="font-size:0.83rem; color:#CBD5E1; margin-bottom:8px;">
-            Ghi nhớ mọi bài học & quy tắc bạn đã dạy cho AI. Tự động áp dụng vào quy trình xử lý dữ liệu.
-        </div>
-        """, unsafe_allow_html=True)
-        
-        teach_text_input = st.text_area(
-            "Dạy kiến thức mới cho AI:",
-            placeholder="Gõ: Dạy AI: [Nội dung quy tắc / kinh nghiệm mới]...",
-            help="Ví dụ: Dạy AI: Các từ viết tắt như 'bt' chuyển thành 'bình thường'...",
-            key="txt_teach_ai_box",
-            height=85
-        )
-        if st.button("🧠 Ghi Nhớ & Dạy AI Ngay", type="primary", use_container_width=True, key="btn_teach_ai_act"):
-            if teach_text_input.strip():
-                new_rule = add_teaching_rule(teach_text_input)
-                st.toast(f"✅ AI đã học và lưu bài học mới: [{new_rule['tag']}]!", icon="🧠")
-                st.rerun()
-            else:
-                st.warning("Vui lòng nhập nội dung muốn dạy AI trước.")
-        
-        st.markdown("---")
-        rules_mem = load_teaching_memory()
-        st.markdown(f"**📚 Bộ nhớ AI ({len(rules_mem)} quy tắc đã lưu):**")
-        
-        for rule in rules_mem:
-            tag_name = rule.get("tag", "Quy tắc")
-            tag_color = "#38BDF8" if tag_name == "Lọc Review Vô Nghĩa" else ("#34D399" if tag_name == "Nhận Diện Đa Ngôn Ngữ" else ("#F59E0B" if tag_name == "Sửa Lỗi Chính Tả & Teencode" else "#EC4899"))
-            st.markdown(f"""
-            <div style="background:#1E293B; border:1px solid #334155; border-radius:8px; padding:10px 12px; margin-bottom:8px; color:#F8FAFC; font-size:0.83rem;">
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-                    <span style="background:rgba(255,255,255,0.1); color:{tag_color}; padding:2px 8px; border-radius:12px; font-weight:700; font-size:0.75rem; border:1px solid {tag_color};">🏷️ {tag_name}</span>
-                    <span style="color:#94A3B8; font-size:0.75rem;">📅 {rule.get('created_at', '')}</span>
-                </div>
-                <div style="color:#E2E8F0; line-height:1.45; margin-top:4px;">
-                    {rule.get('content', '')}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            if not rule.get("is_default", False):
-                if st.button("🗑️ Xóa bài học này", key=f"del_mem_rule_{rule['id']}", use_container_width=True):
-                    delete_teaching_rule(rule['id'])
-                    st.toast("Đã xóa bài học khỏi bộ nhớ AI!", icon="🗑️")
-                    st.rerun()
+    st.subheader("🧠 Lịch Sử Dạy AI — Tool")
+    st.caption("Xem bảng tổng hợp tri thức & phân tích AI về đóng góp cải tiến tool.")
+    if st.button("🚀 Mở Bảng Lịch Sử Dạy AI (Popup)", type="primary", use_container_width=True, key="btn_open_teaching_modal"):
+        show_teaching_memory_dialog()
 
     st.divider()
 
@@ -595,102 +731,9 @@ if "clean_results" not in st.session_state:
     st.session_state["clean_results"] = []
 if "clean_live_df" not in st.session_state:
     st.session_state["clean_live_df"] = None
-if "clean_elapsed" not in st.session_state:
     st.session_state["clean_elapsed"] = 0.0
 if "clean_batch_size" not in st.session_state:
     st.session_state["clean_batch_size"] = 100
-
-def render_dark_dataframe(df_to_render: pd.DataFrame, max_height: str = "600px") -> str:
-    if df_to_render is None or df_to_render.empty:
-        return '<div style="color:#94a3b8; font-style:italic;">(Không có dữ liệu)</div>'
-        
-    columns = list(df_to_render.columns)
-    
-    # Headers
-    th_html_list = []
-    for c in columns:
-        c_str = str(c)
-        c_l = c_str.lower()
-        if any(k in c_l for k in ["stt", "id", "mã"]):
-            th_html_list.append(f'<th style="width: 60px; text-align: center;">{c_str}</th>')
-        elif any(k in c_l for k in ["tháng"]):
-            th_html_list.append(f'<th style="width: 80px; text-align: center;">{c_str}</th>')
-        elif any(k in c_l for k in ["cảm xúc", "sentiment"]):
-            th_html_list.append(f'<th style="width: 140px; text-align: center;">{c_str}</th>')
-        elif any(k in c_l for k in ["ngành hàng", "đánh giá", "tình trạng"]):
-            th_html_list.append(f'<th style="width: 130px;">{c_str}</th>')
-        elif any(k in c_l for k in ["tokens"]):
-            th_html_list.append(f'<th style="width: 18%;">{c_str}</th>')
-        elif any(k in c_l for k in ["bình luận", "review", "text", "dịch", "sửa", "clean"]):
-            th_html_list.append(f'<th style="min-width: 180px;">{c_str}</th>')
-        else:
-            th_html_list.append(f'<th>{c_str}</th>')
-            
-    header_tr = "".join(th_html_list)
-    
-    # Rows
-    rows_html_list = []
-    for idx, row in df_to_render.iterrows():
-        row_str = " ".join([str(v) for v in row.values])
-        is_removed = ("LOẠI" in row_str) or ("Đã loại bỏ" in row_str) or ("❌" in row_str)
-        
-        row_class = "removed-row" if is_removed else ""
-        
-        td_html_list = []
-        for c in columns:
-            val = row[c]
-            val_str = str(val) if val is not None else ""
-            c_l = str(c).lower()
-            
-            if "cảm xúc" in c_l or "sentiment" in c_l:
-                if "Tích cực" in val_str or "🟢" in val_str:
-                    td_html_list.append(f'<td class="sent-cell"><span class="diff-badge badge-pos">{val_str}</span></td>')
-                elif "Tiêu cực" in val_str or "🔴" in val_str:
-                    td_html_list.append(f'<td class="sent-cell"><span class="diff-badge badge-neg">{val_str}</span></td>')
-                elif "LOẠI" in val_str or "Đã loại" in val_str:
-                    td_html_list.append(f'<td class="sent-cell"><span class="diff-badge badge-loai">{val_str}</span></td>')
-                elif val_str and val_str != "-":
-                    td_html_list.append(f'<td class="sent-cell"><span class="diff-badge badge-neu">{val_str}</span></td>')
-                else:
-                    td_html_list.append('<td class="sent-cell">-</td>')
-            elif any(k in c_l for k in ["stt", "id", "mã"]):
-                td_html_list.append(f'<td class="stt-cell">{val_str}</td>')
-            elif "tokens" in c_l:
-                if val_str and val_str != "LOẠI":
-                    td_html_list.append(f'<td class="token-cell"><code>{val_str}</code></td>')
-                elif val_str == "LOẠI":
-                    td_html_list.append('<td class="token-cell"><span style="color:#f87171; font-weight:700;">LOẠI</span></td>')
-                else:
-                    td_html_list.append('<td></td>')
-            elif "clean" in c_l:
-                if val_str == "LOẠI":
-                    td_html_list.append('<td class="clean-cell" style="color:#f87171; font-weight:700;">LOẠI</td>')
-                else:
-                    td_html_list.append(f'<td class="clean-cell">{val_str}</td>')
-            elif "dịch" in c_l or "sửa" in c_l:
-                if val_str == "LOẠI":
-                    td_html_list.append('<td style="color:#f87171; font-weight:700;">LOẠI</td>')
-                else:
-                    td_html_list.append(f'<td>{val_str}</td>')
-            elif "tình trạng" in c_l:
-                td_html_list.append(f'<td><span class="diff-badge badge-neg">{val_str}</span></td>')
-            else:
-                td_html_list.append(f'<td>{val_str}</td>')
-                
-        tr_html = f'<tr class="{row_class}">{"".join(td_html_list)}</tr>'
-        rows_html_list.append(tr_html)
-        
-    tbody_html = "".join(rows_html_list)
-    
-    scroll_style = f"height: {max_height}; min-height: 320px; resize: vertical; overflow: auto;" if max_height else "resize: vertical; overflow: auto;"
-    return (
-        f'<div class="diff-table-container" style="{scroll_style}">'
-        '<table class="dark-diff-table">'
-        f'<thead><tr>{header_tr}</tr></thead>'
-        f'<tbody>{tbody_html}</tbody>'
-        '</table>'
-        '</div>'
-    )
 
 # =========================================================================================
 # PHẦN 1: TẢI LÊN & XEM TRƯỚC DỮ LIỆU
@@ -785,7 +828,7 @@ if df_input is not None:
             # Khởi tạo bảng live
             df_live = df_input.copy()
             df_live["[1. Dịch Tiếng Việt, Lowercase & Bỏ Ký Tự Thừa]"] = ""
-            df_live["[2. Sửa Teencode & Lỗi]"] = ""
+            df_live["[2. Sửa Teencode & Lỗi - AI Tóm tắt ý chính]"] = ""
             df_live["[3. Văn Bản Đã Clean]"] = ""
             df_live["[4. Tokens NLP]"] = ""
             st.session_state["clean_live_df"] = df_live
@@ -850,7 +893,7 @@ if df_input is not None:
             )
             results_list.append(res)
             df_live.at[i, "[1. Dịch Tiếng Việt, Lowercase & Bỏ Ký Tự Thừa]"] = res["step1_translated_clean"]
-            df_live.at[i, "[2. Sửa Teencode & Lỗi]"] = res["step2_teencode"]
+            df_live.at[i, "[2. Sửa Teencode & Lỗi - AI Tóm tắt ý chính]"] = res["step2_teencode"]
             df_live.at[i, "[3. Văn Bản Đã Clean]"] = res["cleaned_text"]
             df_live.at[i, "[4. Tokens NLP]"] = ", ".join(res["tokens"])
 
@@ -1014,41 +1057,109 @@ if df_input is not None:
             st.markdown("#### 🗑️ BƯỚC LỌC REVIEW : CÁC DÒNG REVIEW KHÔNG CÓ Ý NGHĨA ĐÃ BỊ LOẠI BỎ")
             st.caption("Các dòng review dưới đây không mang ý nghĩa đánh giá sản phẩm / dịch vụ, câu vô nghĩa hoặc sai chính tả không thể hiểu/dịch được:")
             df_meaningless = pd.DataFrame(meaningless_items)
-            st.markdown(render_dark_dataframe(df_meaningless, max_height="400px"), unsafe_allow_html=True)
+            st.markdown(render_dark_dataframe(df_meaningless, max_height="350px"), unsafe_allow_html=True)
+            st.write("")
+
+        # =====================================================================================
+        # BẢNG DỮ LIỆU SAU KHI CLEAN (BẢNG CLEAN BAN ĐẦU 4 BƯỚC - LUÔN HIỆN TRỰC TIẾP)
+        # =====================================================================================
+        st.markdown("### ⚡ Bảng Dữ Liệu Sau Khi Clean:")
+        df_clean_initial = pd.DataFrame({
+            "ID": [idx + 1 for idx in range(total_rows)],
+            "TEXT": [r["raw_text"] for r in results],
+            "[1. DỊCH TIẾNG VIỆT, LOWERCASE & BỎ KÝ TỰ THỪA]": [r["step1_translated_clean"] if not r.get("is_meaningless", False) else "LOẠI" for r in results],
+            "[2. SỬA TEENCODE & LỖI - AI TÓM TẮT Ý CHÍNH]": [r["step2_teencode"] if not r.get("is_meaningless", False) else "LOẠI" for r in results],
+            "[3. VĂN BẢN ĐÃ CLEAN]": [r["cleaned_text"] if not r.get("is_meaningless", False) else "LOẠI" for r in results],
+            "[4. TOKENS NLP]": [", ".join(r["tokens"]) if not r.get("is_meaningless", False) else "LOẠI" for r in results]
+        })
+
+        if total_rows > 1000:
+            page_size = 1000
+            total_pages = (total_rows + page_size - 1) // page_size
+            cp1, cp2 = st.columns([2, 3])
+            with cp1:
+                page_sel = st.selectbox(
+                    f"📄 Chọn trang xem ({total_pages} trang, 1,000 dòng/trang):",
+                    options=list(range(1, total_pages + 1)),
+                    format_func=lambda x: f"Trang {x} (Dòng {(x-1)*page_size + 1} - {min(x*page_size, total_rows)})",
+                    key="sb_page_clean_initial"
+                )
+            start_p = (page_sel - 1) * page_size
+            end_p = min(start_p + page_size, total_rows)
+            df_clean_view = df_clean_initial.iloc[start_p:end_p]
+            st.markdown(render_dark_dataframe(df_clean_view, max_height="650px"), unsafe_allow_html=True)
+        else:
+            st.markdown(render_dark_dataframe(df_clean_initial, max_height="650px"), unsafe_allow_html=True)
 
         st.write("")
-        # CÁC NÚT ĐIỀU HƯỚNG TỪNG BƯỚC (STEP 1.2, STEP 2, STEP 3)
-        col_s1, col_s2, col_s3 = st.columns(3)
+        # CÁC NÚT ĐIỀU HƯỚNG TỪNG BƯỚC (BƯỚC 2, BƯỚC 3, TẢI EXCEL)
+        col_s2, col_s3, col_s_dl = st.columns(3)
         
-        with col_s1:
-            btn_label_1 = "🏷️ BƯỚC 1.2: PHÂN TÍCH CẢM XÚC AI" if not is_sentiment_active else "🏷️ BƯỚC 1.2: ĐÃ HIỆN CẢM XÚC (BẤM ĐỂ ẨN)"
-            btn_type_1 = "primary" if not is_sentiment_active else "secondary"
-            if st.button(btn_label_1, type=btn_type_1, use_container_width=True, key="btn_step_1_2"):
-                st.session_state["show_sentiment_col"] = not is_sentiment_active
-                st.rerun()
-
         with col_s2:
-            is_diff_active = st.session_state.get("show_visual_diff", False)
-            btn_label_2 = "📋 BƯỚC 2: XEM BẢNG SO SÁNH VISUAL DIFF" if not is_diff_active else "📋 BƯỚC 2: ĐÃ MỞ VISUAL DIFF (BẤM ĐỂ ĐÓNG)"
-            btn_type_2 = "primary" if not is_diff_active else "secondary"
-            if st.button(btn_label_2, type=btn_type_2, use_container_width=True, key="btn_step_2"):
-                st.session_state["show_visual_diff"] = not is_diff_active
+            btn_label_2 = "🏷️ BƯỚC 2: PHÂN TÍCH CẢM XÚC AI" if not is_sentiment_active else "🏷️ BƯỚC 2: ĐÃ HIỆN CẢM XÚC (BẤM ĐỂ ẨN)"
+            btn_type_2 = "primary" if not is_sentiment_active else "secondary"
+            if st.button(btn_label_2, type=btn_type_2, use_container_width=True, key="btn_step_2_sent"):
+                st.session_state["show_sentiment_col"] = not is_sentiment_active
                 st.rerun()
 
         with col_s3:
             is_deep_active = st.session_state.get("show_deep_analysis", False)
-            btn_label_3 = "📊 BƯỚC 3: XEM BÁO CÁO PHÂN TÍCH CHUYÊN SÂU" if not is_deep_active else "📊 BƯỚC 3: ĐÃ MỞ PHÂN TÍCH CHUYÊN SÂU (BẤM ĐỂ ĐÓNG)"
+            btn_label_3 = "📊 BƯỚC 3: PHÂN TÍCH CHUYÊN SÂU" if not is_deep_active else "📊 BƯỚC 3: ĐÃ MỞ BÁO CÁO (BẤM ĐỂ ĐÓNG)"
             btn_type_3 = "primary" if not is_deep_active else "secondary"
-            if st.button(btn_label_3, type=btn_type_3, use_container_width=True, key="btn_step_3"):
+            if st.button(btn_label_3, type=btn_type_3, use_container_width=True, key="btn_step_3_deep"):
                 st.session_state["show_deep_analysis"] = not is_deep_active
                 st.rerun()
 
+        with col_s_dl:
+            # Tạo file Excel nén đa Sheet (Dữ liệu Clean + Cảm xúc + Tần suất từ + Cụm từ)
+            clean_texts_all = [r["cleaned_text"] for r in results]
+            valid_res_for_dl = [r for r in results if not r.get("is_meaningless", False)]
+            tokens_all_dl = [r["tokens"] for r in valid_res_for_dl if r["tokens"]]
+
+            df_export_quick = df_input.iloc[:len(results)].copy() if df_input is not None else pd.DataFrame()
+            df_export_quick["[1. DỊCH TIẾNG VIỆT, LOWERCASE & BỎ KÝ TỰ THỪA]"] = [r["step1_translated_clean"] if not r.get("is_meaningless", False) else "LOẠI" for r in results]
+            df_export_quick["[2. SỬA TEENCODE & LỖI - AI TÓM TẮT Ý CHÍNH]"] = [r["step2_teencode"] if not r.get("is_meaningless", False) else "LOẠI" for r in results]
+            df_export_quick["[3. VĂN BẢN ĐÃ CLEAN]"] = [r["cleaned_text"] if not r.get("is_meaningless", False) else "LOẠI" for r in results]
+            df_export_quick["[4. TOKENS NLP]"] = [", ".join(r["tokens"]) if not r.get("is_meaningless", False) else "LOẠI" for r in results]
+            df_export_quick["[CẢM XÚC AI]"] = [r["sentiment"]["label"] for r in results]
+            df_export_quick["[ĐỘ TIN CẬY]"] = [f"{r['sentiment']['confidence_percent']}%" for r in results]
+
+            tot_dl = max(1, len(valid_res_for_dl))
+            pos_dl = sum(1 for r in valid_res_for_dl if r["sentiment"]["label"] == "Tích cực")
+            neg_dl = sum(1 for r in valid_res_for_dl if r["sentiment"]["label"] == "Tiêu cực")
+            neu_dl = sum(1 for r in valid_res_for_dl if r["sentiment"]["label"] == "Trung tính")
+            df_sent_dl = pd.DataFrame([
+                {"Loại Cảm Xúc": "🟢 Tích cực (Positive)", "Số Lượng Bình Luận": pos_dl, "Tỷ Lệ %": f"{round(pos_dl/tot_dl*100, 1)}%", "Đánh Giá": "Khách hàng hài lòng, khen ngợi chất lượng/dịch vụ"},
+                {"Loại Cảm Xúc": "🔴 Tiêu cực (Negative)", "Số Lượng Bình Luận": neg_dl, "Tỷ Lệ %": f"{round(neg_dl/tot_dl*100, 1)}%", "Đánh Giá": "Khách phàn nàn về giao hàng chậm, hàng lỗi, thái độ"},
+                {"Loại Cảm Xúc": "🔵 Trung tính (Neutral)", "Số Lượng Bình Luận": neu_dl, "Tỷ Lệ %": f"{round(neu_dl/tot_dl*100, 1)}%", "Đánh Giá": "Bình luận hỏi thông tin, đặt size, trung lập"}
+            ])
+            df_wf_dl = compute_word_frequency(tokens_all_dl, top_n=20)
+            _, df_bg_dl = extract_top_ngrams(tokens_all_dl, top_n=20)
+
+            buf_quick = io.BytesIO()
+            with pd.ExcelWriter(buf_quick, engine="openpyxl") as writer:
+                df_export_quick.to_excel(writer, index=False, sheet_name="Full_Cleaned_NLP")
+                df_sent_dl.to_excel(writer, index=False, sheet_name="Sentiment_Summary")
+                df_wf_dl.to_excel(writer, index=False, sheet_name="Word_Frequency")
+                df_bg_dl.to_excel(writer, index=False, sheet_name="Top_Bigrams")
+            buf_quick.seek(0)
+
+            st.download_button(
+                label="📥 TẢI EXCEL KẾT QUẢ ĐẦY ĐỦ",
+                data=buf_quick,
+                file_name="Cleaned_Analysis_Review_NLP.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                use_container_width=True,
+                key="btn_quick_download_excel"
+            )
+
         # =====================================================================================
-        # STEP 1.2: HIỂN THỊ KẾT QUẢ CẢM XÚC AI & BẢNG TỔNG QUAN
+        # BƯỚC 2: HIỂN THỊ KẾT QUẢ CẢM XÚC AI & BẢNG TỔNG QUAN (KHI CLICK BƯỚC 2)
         # =====================================================================================
         if is_sentiment_active:
             st.divider()
-            st.markdown("### 🏷️ BƯỚC 1.2: KẾT QUẢ PHÂN TÍCH CẢM XÚC AI (SENTIMENT ANALYSIS)")
+            st.markdown("### 🏷️ BƯỚC 2: KẾT QUẢ PHÂN TÍCH CẢM XÚC AI (SENTIMENT ANALYSIS)")
             
             valid_results = [r for r in results if not r.get("is_meaningless", False)]
             pos_cnt = sum(1 for r in valid_results if r["sentiment"]["label"] == "Tích cực")
@@ -1081,16 +1192,16 @@ if df_input is not None:
                 </div>
                 """, unsafe_allow_html=True)
 
-            df_sent_step12 = pd.DataFrame([
+            df_sent_step2 = pd.DataFrame([
                 {"Loại Cảm Xúc": "🟢 Tích cực (Positive)", "Số Lượng Bình Luận": pos_cnt, "Tỷ Lệ %": f"{round(pos_cnt/tot*100, 1)}%", "Đánh Giá": "Khách hàng hài lòng, khen ngợi chất lượng/dịch vụ"},
                 {"Loại Cảm Xúc": "🔴 Tiêu cực (Negative)", "Số Lượng Bình Luận": neg_cnt, "Tỷ Lệ %": f"{round(neg_cnt/tot*100, 1)}%", "Đánh Giá": "Khách phàn nàn về giao hàng chậm, hàng lỗi, thái độ"},
                 {"Loại Cảm Xúc": "🔵 Trung tính (Neutral)", "Số Lượng Bình Luận": neu_cnt, "Tỷ Lệ %": f"{round(neu_cnt/tot*100, 1)}%", "Đánh Giá": "Bình luận hỏi thông tin, đặt size, trung lập"}
             ])
-            st.markdown(render_dark_dataframe(df_sent_step12, max_height=""), unsafe_allow_html=True)
+            st.markdown(render_dark_dataframe(df_sent_step2, max_height=""), unsafe_allow_html=True)
 
-            # BẢNG DỮ LIỆU BƯỚC 1.2: 5 TRƯỜNG CHUẨN (ID, TEXT, VĂN BẢN ĐÃ CLEAN, TOKENS NLP, Sentiment)
+            # BẢNG DỮ LIỆU BƯỚC 2: 5 TRƯỜNG CHUẨN (ID, TEXT, VĂN BẢN ĐÃ CLEAN, TOKENS NLP, Sentiment)
             st.markdown("#### ⚡ Bảng Dữ Liệu Sau Khi Clean & Gán Cảm Xúc AI:")
-            df_step12_table = pd.DataFrame({
+            df_step2_table = pd.DataFrame({
                 "ID": [idx + 1 for idx in range(total_rows)],
                 "TEXT": [r["raw_text"] for r in results],
                 "VĂN BẢN ĐÃ CLEAN": [r["cleaned_text"] if not r.get("is_meaningless", False) else "LOẠI" for r in results],
@@ -1107,109 +1218,14 @@ if df_input is not None:
                         f"📄 Chọn trang xem ({total_pages} trang, 1,000 dòng/trang):",
                         options=list(range(1, total_pages + 1)),
                         format_func=lambda x: f"Trang {x} (Dòng {(x-1)*page_size + 1} - {min(x*page_size, total_rows)})",
-                        key="sb_page_step12"
+                        key="sb_page_step2"
                     )
                 start_p = (page_sel - 1) * page_size
                 end_p = min(start_p + page_size, total_rows)
-                df_step12_view = df_step12_table.iloc[start_p:end_p]
-                st.markdown(render_dark_dataframe(df_step12_view, max_height="650px"), unsafe_allow_html=True)
+                df_step2_view = df_step2_table.iloc[start_p:end_p]
+                st.markdown(render_dark_dataframe(df_step2_view, max_height="650px"), unsafe_allow_html=True)
             else:
-                st.markdown(render_dark_dataframe(df_step12_table, max_height="650px"), unsafe_allow_html=True)
-
-        # =====================================================================================
-        # STEP 2: BẢNG DỮ LIỆU ĐÃ CLEAN VÀ VISUAL DIFF (CLICK MỚI RA)
-        # =====================================================================================
-        if st.session_state.get("show_visual_diff", False):
-            st.divider()
-            st.markdown("### 📋 BƯỚC 2: BẢNG SO SÁNH CHI TIẾT (VISUAL DIFF & ĐIỂM THAY ĐỔI)")
-            
-            total_teencode_fixed = sum(len(r["replaced_teencodes"]) for r in results)
-            total_icons_removed = sum(len(r["removed_icons"]) for r in results)
-            total_sw_removed = sum(len(r["removed_stopwords"]) for r in results)
-
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Tổng số dòng đã Clean", f"{total_rows}")
-            m2.metric("Từ Teencode đã sửa", f"{total_teencode_fixed} từ", delta="✏️ Đã chuẩn hóa")
-            m3.metric("Icon/Emoji đã loại", f"{total_icons_removed}", delta="😊 Đã xóa")
-            m4.metric("Từ dừng đã lọc", f"{total_sw_removed}", delta="🚫 Đã loại bỏ")
-
-            st.markdown("""
-            <div class="diff-legend-card">
-                <div style="font-size:1.05rem; font-weight:700; color:#38BDF8; margin-bottom:8px;">
-                    🎨 BẢNG QUY ĐỊNH MÀU SẮC (DARK MODE HIGHLIGHT):
-                </div>
-                <div style="display:flex; flex-wrap:wrap; gap:16px; font-size:0.9rem; align-items:center;">
-                    <div><del style="background-color:rgba(239, 68, 68, 0.22); color:#F87171; border:1px solid rgba(239, 68, 68, 0.45); padding:3px 8px; border-radius:6px; font-weight:600;">Gạch ngang màu đỏ</del> : Từ dừng (stopwords) & Icon đã bị loại bỏ.</div>
-                    <div><span style="background-color:rgba(245, 158, 11, 0.22); color:#FBBF24; border:1px solid rgba(245, 158, 11, 0.5); padding:3px 8px; border-radius:6px; font-weight:600;">Màu cam</span> : Teencode / Lỗi chính tả đã chuẩn hóa.</div>
-                    <div><span style="background-color:rgba(34, 197, 94, 0.22); color:#4ADE80; border:1px solid rgba(34, 197, 94, 0.45); padding:3px 8px; border-radius:6px; font-weight:600;">Màu xanh lá</span> : Chuỗi Token NLP giữ lại.</div>
-                    <div><b>Cảm xúc AI:</b> <span class="diff-badge badge-pos">🟢 Tích cực</span> &nbsp;<span class="diff-badge badge-neg">🔴 Tiêu cực</span> &nbsp;<span class="diff-badge badge-neu">🔵 Trung tính</span></div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-            if total_rows > 1000:
-                page_size_diff = 1000
-                total_pages_diff = (total_rows + page_size_diff - 1) // page_size_diff
-                cpd1, cpd2 = st.columns([2, 3])
-                with cpd1:
-                    page_diff_sel = st.selectbox(
-                        f"📄 Chọn trang Visual Diff ({total_pages_diff} trang, 1,000 dòng/trang):",
-                        options=list(range(1, total_pages_diff + 1)),
-                        format_func=lambda x: f"Trang {x} (Dòng {(x-1)*page_size_diff + 1} - {min(x*page_size_diff, total_rows)})",
-                        key="sb_page_diff"
-                    )
-                start_d = (page_diff_sel - 1) * page_size_diff
-                end_d = min(start_d + page_size_diff, total_rows)
-                results_page = results[start_d:end_d]
-                offset_idx = start_d
-            else:
-                results_page = results
-                offset_idx = 0
-
-            table_rows_html = []
-            for sub_idx, r in enumerate(results_page):
-                idx = offset_idx + sub_idx
-                is_mean = r.get("is_meaningless", False)
-                sent = r["sentiment"]
-                
-                if is_mean or "LOẠI" in sent.get("badge", ""):
-                    sent_badge = '<span class="diff-badge badge-loai">🟡 LOẠI</span>'
-                elif sent["label"] == "Tích cực" or "Tích cực" in sent.get("badge", ""):
-                    conf = sent.get("confidence_percent", 90)
-                    sent_badge = f'<span class="diff-badge badge-pos">🟢 Tích cực {conf}%</span>'
-                elif sent["label"] == "Tiêu cực" or "Tiêu cực" in sent.get("badge", ""):
-                    conf = sent.get("confidence_percent", 90)
-                    sent_badge = f'<span class="diff-badge badge-neg">🔴 Tiêu cực {conf}%</span>'
-                else:
-                    conf = sent.get("confidence_percent", 70)
-                    sent_badge = f'<span class="diff-badge badge-neu">🔵 Trung tính {conf}%</span>'
-                
-                tokens_str = ", ".join(r["tokens"]) if r["tokens"] else '<span style="color:#64748b; font-style:italic;">(Trống)</span>'
-                clean_text_disp = r["cleaned_text"] if r["cleaned_text"] else '<span style="color:#64748b; font-style:italic;">(Đã lọc bỏ)</span>'
-                if is_mean:
-                    clean_text_disp = '<span style="color:#f87171; font-weight:700;">LOẠI</span>'
-                    tokens_str = '<span style="color:#64748b; font-style:italic;">(LOẠI)</span>'
-
-                row_html = f"<tr><td class='stt-cell'>{idx + 1}</td><td class='raw-cell'>{r['raw_text']}</td><td class='diff-cell'>{r['html_diff']}</td><td class='clean-cell'>{clean_text_disp}</td><td class='token-cell'><code>{tokens_str}</code></td><td class='sent-cell'>{sent_badge}</td></tr>"
-                table_rows_html.append(row_html)
-
-            tbody_html = "".join(table_rows_html)
-            full_table_html = (
-                '<div class="diff-table-container" style="max-height: 650px; overflow-y: auto;">'
-                '<table class="dark-diff-table">'
-                '<thead><tr>'
-                '<th style="width: 50px; text-align: center;">STT</th>'
-                '<th style="width: 21%;">Bình luận gốc (Thô)</th>'
-                '<th style="width: 32%;">Điểm Thay Đổi (Visual Diff)</th>'
-                '<th style="width: 19%;">Văn bản sau khi làm sạch</th>'
-                '<th style="width: 16%;">Chuỗi Tokens NLP</th>'
-                '<th style="width: 12%; text-align: center;">Cảm xúc (AI)</th>'
-                '</tr></thead>'
-                f'<tbody>{tbody_html}</tbody>'
-                '</table>'
-                '</div>'
-            )
-            st.markdown(full_table_html, unsafe_allow_html=True)
+                st.markdown(render_dark_dataframe(df_step2_table, max_height="650px"), unsafe_allow_html=True)
 
     elif not btn_clean_run:
         st.markdown("#### 📋 Xem Trước Bảng Dữ Liệu Thô (Raw Data):")

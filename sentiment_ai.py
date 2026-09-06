@@ -89,22 +89,37 @@ def analyze_sentiment(text: str, tokens: list = None) -> Dict[str, Any]:
     if tokens:
         all_words += [t.lower() for t in tokens]
 
+    # Nạp thêm từ vựng/cảm xúc do người dùng dạy AI
+    learned_pos = set()
+    learned_neg = set()
+    try:
+        from ai_teaching_memory import get_active_learned_actions
+        la = get_active_learned_actions()
+        learned_pos = la.get("positive_words", set())
+        learned_neg = la.get("negative_words", set())
+    except Exception:
+        pass
+
+    active_pos = POSITIVE_WORDS.union(learned_pos)
+    active_neg = NEGATIVE_WORDS.union(learned_neg)
+
     pos_score = 0
     neg_score = 0
     
     i = 0
     while i < len(all_words):
-        w = all_words[i].strip("_")
+        w = all_words[i]
+        w_clean = w.strip("_")
         is_negated = False
         if i > 0 and all_words[i-1] in NEGATION_WORDS:
             is_negated = True
         
-        if w in POSITIVE_WORDS or w.replace("_", " ") in POSITIVE_WORDS:
+        if w in active_pos or w_clean in active_pos or w.replace("_", " ") in active_pos:
             if is_negated:
                 neg_score += 1.5
             else:
                 pos_score += 1.3
-        elif w in NEGATIVE_WORDS or w.replace("_", " ") in NEGATIVE_WORDS:
+        elif w in active_neg or w_clean in active_neg or w.replace("_", " ") in active_neg:
             if is_negated:
                 pos_score += 1.1
             else:

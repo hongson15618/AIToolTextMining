@@ -19,6 +19,8 @@ TEENCODE_DICT = {
     "hông": "không",
     "k bit": "không biết",
     "k rõ": "không rõ",
+    "kh biết": "không biết",
+    "kh có": "không có",
 
     # Trợ từ, động từ, đại từ
     "dc": "được",
@@ -27,6 +29,12 @@ TEENCODE_DICT = {
     "đk": "được",
     "duc": "được",
     "đuc": "được",
+    "trl": "trả lời",
+    "tl": "trả lời",
+    "tloi": "trả lời",
+    "rep": "trả lời",
+    "thoi": "thôi",
+    "take care": "chăm sóc",
     "nv": "nhân viên",
     "nvien": "nhân viên",
     "nhanvien": "nhân viên",
