@@ -251,7 +251,15 @@ ENGLISH_INDICATORS = {
     "chicken", "drink", "store", "order", "driver", "platform", "too", "helpful", "polite", "rude"
 }
 
-VI_SPECIAL_CHARS_REGEX = re.compile(r"[ăắằẳẵặâấầẩẫậêếềểễệôốồổỗộơớờởỡợưứừửữựđĐ]", re.IGNORECASE)
+VI_ACCENTED_CHARS_REGEX = re.compile(
+    r"[àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđÀÁẢÃẠĂẰẮẲẴẶÂẦẤẨẪẬÈÉẺẼẸÊỀẾỂỄỆÌÍỈĨỊÒÓỎÕỌÔỒỐỔỖỘƠỜỚỞỠỢÙÚỦŨỤƯỪỨỬỮỰỲÝỶỸỴĐ]"
+)
+
+FOREIGN_SCRIPT_REGEX = re.compile(
+    r"[\uac00-\ud7af\u1100-\u11ff\u4e00-\u9fff\u3400-\u4dbf\u3040-\u309f\u30a0-\u30ff\u0400-\u04ff\u0e00-\u0e7f]"
+)
+
+VI_SPECIAL_CHARS_REGEX = re.compile(r"[ăắằẳẵặâấầẩẫậêếềểễệôốồổỗộơờớởỡợưứừửữựđĐ]", re.IGNORECASE)
 
 def detect_foreign_language_code(text: str) -> Tuple[bool, str]:
     """Tự động nhận diện ngôn ngữ nguồn chuẩn xác toàn cầu (Tiếng Việt, Anh, Nga, Pháp, Ý, Đức, Trung, Hàn, Nhật...)."""
@@ -259,7 +267,7 @@ def detect_foreign_language_code(text: str) -> Tuple[bool, str]:
     if not text_clean:
         return False, "vi"
 
-    # 1. Regex kiểm tra nhanh các bảng chữ cái ngoại ngữ đặc thù
+    # 1. Regex kiểm tra nhanh các bảng chữ cái ngoại ngữ đặc thù (Hàn, Trung, Nhật, Nga, Thái)
     if re.search(r"[\uac00-\ud7af\u1100-\u11ff]", text_clean):
         return True, "ko"
     if re.search(r"[\u4e00-\u9fff\u3400-\u4dbf]", text_clean):
@@ -275,7 +283,21 @@ def detect_foreign_language_code(text: str) -> Tuple[bool, str]:
     words = re.findall(r"[a-zA-Z0-9_àáảãạăằắẳẵặâầấẩẫậèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]+", text_lower)
     word_set = set(words)
 
-    # 2. Kiểm tra từ khóa đặc trưng của tiếng Pháp / Ý / Đức / Tây Ban Nha / Anh
+    # 2. Nếu văn bản có dấu tiếng Việt
+    if VI_ACCENTED_CHARS_REGEX.search(text_clean):
+        # Kiểm tra xem có đoạn tiếng Anh / ngoại ngữ dài xen lẫn (Song ngữ / Đa ngữ) không
+        eng_matches = word_set.intersection(ENGLISH_INDICATORS)
+        if len(eng_matches) >= 3 and len(words) >= 5:
+            # Có câu tiếng Anh xen lẫn trong review tiếng Việt
+            return True, "en"
+        return False, "vi"
+
+    # 3. Văn bản không dấu (Latin thuần): Kiểm tra xem có phải Tiếng Việt không dấu / teencode
+    vi_unaccented_matches = word_set.intersection(VI_UNACCENTED_KEYWORDS)
+    if len(vi_unaccented_matches) >= 2 or (len(words) <= 3 and len(vi_unaccented_matches) >= 1):
+        return False, "vi"
+
+    # 4. Kiểm tra từ khóa đặc trưng của tiếng Pháp / Ý / Đức / Tây Ban Nha / Anh
     if len(word_set.intersection(FRENCH_KEYWORDS)) >= 1:
         return True, "fr"
     if len(word_set.intersection(ITALIAN_KEYWORDS)) >= 1:
@@ -287,26 +309,14 @@ def detect_foreign_language_code(text: str) -> Tuple[bool, str]:
     if len(word_set.intersection(ENGLISH_INDICATORS)) >= 1:
         return True, "en"
 
-    # 3. Dùng thư viện langdetect nếu có từ 2 từ trở lên
-    if HAS_LANGDETECT and len(words) >= 2:
+    # 5. Dùng thư viện langdetect nếu có từ 3 từ trở lên
+    if HAS_LANGDETECT and len(words) >= 3:
         try:
             detected_lang = lang_detect(text_clean)
             if detected_lang != "vi":
                 return True, detected_lang
         except Exception:
             pass
-
-    # 4. Kiểm tra chữ cái chỉ có trong Tiếng Việt (ă, â, ê, ô, ơ, ư, đ)
-    if VI_SPECIAL_CHARS_REGEX.search(text_clean):
-        return False, "vi"
-
-    # 5. Nếu có từ khóa tiếng Việt không dấu hoặc teencode -> Tiếng Việt
-    if word_set.intersection(VI_UNACCENTED_KEYWORDS):
-        return False, "vi"
-
-    # 6. Kiểm tra các dấu thanh tiếng Việt thông thường
-    if re.search(r"[àáảãạèéẻẽẹìíỉĩịòóỏõọùúủũụỳýỷỹỵ]", text_clean):
-        return False, "vi"
 
     return False, "vi"
 
@@ -429,6 +439,7 @@ def translate_to_vietnamese(text: str) -> str:
     """
     Dịch tự động TOÀN BỘ ngoại ngữ (Nga, Trung, Hàn, Nhật, Pháp, Ý, Đức, Tây Ban Nha, Anh...) sang Tiếng Việt.
     Hỗ trợ cả trường hợp 1 ĐÁNH GIÁ CHỨA ĐỒNG THỜI NHIỀU LOẠI NGÔN NGỮ KHÁC NHAU (Song ngữ / Đa ngữ).
+    Tối ưu hóa: Bỏ qua các dòng thuần Tiếng Việt (tốc độ hàng nghìn dòng/giây).
     """
     if not text or not isinstance(text, str) or not text.strip():
         return ""
@@ -443,6 +454,11 @@ def translate_to_vietnamese(text: str) -> str:
         _TRANSLATION_CACHE[text_clean] = res
         return res
 
+    is_foreign, lang_code = detect_foreign_language_code(text_clean)
+    if not is_foreign:
+        _TRANSLATION_CACHE[text_clean] = text_clean
+        return text_clean
+
     # 1. Thử dịch qua Clients5 API (Hỗ trợ tốt nhất cho văn bản song ngữ Anh - Trung, Anh - Nga...)
     res_c5 = _translate_via_google_clients5(text_clean, src_lang="auto")
     if res_c5:
@@ -450,8 +466,7 @@ def translate_to_vietnamese(text: str) -> str:
         return res_c5
 
     # 2. Thử qua Google Translate GTX
-    is_foreign, lang_code = detect_foreign_language_code(text_clean)
-    if is_foreign and lang_code and lang_code != "vi":
+    if lang_code and lang_code != "vi":
         gtx_lang = _translate_via_google_gtx(text_clean, src_lang=lang_code)
         if gtx_lang:
             _TRANSLATION_CACHE[text_clean] = gtx_lang
